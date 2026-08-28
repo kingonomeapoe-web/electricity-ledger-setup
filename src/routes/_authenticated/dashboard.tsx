@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Loader2, Building2, Receipt, ShieldCheck } from "lucide-react";
+import { Loader2, Building2, ClipboardList, Receipt, ShieldCheck } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
