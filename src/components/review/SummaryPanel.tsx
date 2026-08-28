@@ -13,6 +13,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
+import type { Database } from "@/integrations/supabase/types";
 import { cn } from "@/lib/utils";
 
 export type SummaryCounts = {
@@ -31,7 +32,7 @@ export function useReviewSummary(propertyId: string) {
     queryKey: ["review-summary", propertyId],
     enabled: !!propertyId,
     queryFn: async (): Promise<SummaryCounts> => {
-      const pendingStatuses = [
+      const pendingStatuses: Database["public"]["Enums"]["payment_status"][] = [
         "uploaded",
         "ocr_processed",
         "pending_approval",

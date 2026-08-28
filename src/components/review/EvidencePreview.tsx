@@ -11,9 +11,9 @@ export function EvidencePreview({
   className,
 }: {
   storagePath: string | null | undefined;
-  mimeType?: string | null;
-  filename?: string | null;
-  className?: string;
+  mimeType?: string | null | undefined;
+  filename?: string | null | undefined;
+  className?: string | undefined;
 }) {
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);

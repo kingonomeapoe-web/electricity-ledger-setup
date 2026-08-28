@@ -694,7 +694,7 @@ function CreditFlow({
                   p_central_balance_after_kwh: reading.readingKwh,
                   p_reading_evidence_id: reading.evidenceId,
                   p_load_evidence_id: loadEvidenceId!,
-                  p_notes: notes || undefined,
+                  ...(notes ? { p_notes: notes } : {}),
                 },
               );
               if (rpcError) throw new Error(rpcError.message);

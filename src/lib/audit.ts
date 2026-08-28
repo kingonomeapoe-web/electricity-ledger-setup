@@ -19,13 +19,15 @@ export async function logAudit(params: {
   newData?: unknown;
   metadata?: unknown;
 }) {
+  const oldData = asJson(params.oldData);
+  const newData = asJson(params.newData);
   const { error } = await supabase.rpc("log_admin_audit", {
     p_property_id: params.propertyId,
     p_event_type: params.eventType,
     p_entity_type: params.entityType,
-    p_entity_id: params.entityId ?? undefined,
-    p_old_data: asJson(params.oldData) ?? undefined,
-    p_new_data: asJson(params.newData) ?? undefined,
+    ...(params.entityId ? { p_entity_id: params.entityId } : {}),
+    ...(oldData !== null ? { p_old_data: oldData } : {}),
+    ...(newData !== null ? { p_new_data: newData } : {}),
     p_metadata: (asJson(params.metadata) ?? {}) as Json,
   });
   if (error) throw new Error(error.message);
