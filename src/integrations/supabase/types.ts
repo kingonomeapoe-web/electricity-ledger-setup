@@ -1286,6 +1286,15 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      classify_reconciliation_variance: {
+        Args: {
+          p_classification: Database["public"]["Enums"]["reconciliation_classification"]
+          p_explanation: string
+          p_reconciliation_id: string
+          p_status?: Database["public"]["Enums"]["reconciliation_status"]
+        }
+        Returns: string
+      }
       confirm_central_meter_credit: {
         Args: {
           p_central_balance_after_kwh: number
@@ -1298,11 +1307,35 @@ export type Database = {
         }
         Returns: string
       }
+      create_ledger_adjustment: {
+        Args: {
+          p_explanation: string
+          p_original_transaction_id?: string
+          p_property_id: string
+          p_reason: string
+          p_resident_id: string
+          p_transaction_type?: Database["public"]["Enums"]["ledger_transaction_type"]
+          p_units_kwh: number
+        }
+        Returns: string
+      }
       is_admin: { Args: never; Returns: boolean }
       is_property_admin: { Args: { p_property_id: string }; Returns: boolean }
       is_property_resident: {
         Args: { p_property_id: string }
         Returns: boolean
+      }
+      log_admin_audit: {
+        Args: {
+          p_entity_id?: string
+          p_entity_type: string
+          p_event_type: string
+          p_metadata?: Json
+          p_new_data?: Json
+          p_old_data?: Json
+          p_property_id: string
+        }
+        Returns: string
       }
       post_confirmed_submeter_consumption: {
         Args: { p_submeter_reading_id: string }

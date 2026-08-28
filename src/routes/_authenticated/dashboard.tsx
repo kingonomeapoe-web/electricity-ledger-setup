@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Loader2, Building2, Receipt, ShieldCheck } from "lucide-react";
+import { Loader2, Building2, ClipboardList, Receipt, ShieldCheck } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
@@ -62,11 +62,18 @@ function Dashboard() {
         {adminMemberships.length > 0 ? (
           <>
             <Card
+              icon={ClipboardList}
+              title="Review & reconciliation"
+              body="Approve payments, confirm readings, classify variances and audit every action."
+              to="/review"
+            />
+            <Card
               icon={ShieldCheck}
               title="Evidence & readings"
               body="Review receipts, record token loads, capture central and submeter readings."
               to="/admin"
             />
+
             <Card
               icon={Building2}
               title="Property setup"
