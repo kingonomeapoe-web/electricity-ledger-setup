@@ -14,6 +14,7 @@ import {
 import { PaymentsPanel } from "@/components/admin/PaymentsPanel";
 import { CentralMeterPanel } from "@/components/admin/CentralMeterPanel";
 import { SubmeterPanel } from "@/components/admin/SubmeterPanel";
+import { PropertyOverview } from "@/components/admin/PropertyOverview";
 import { useCurrentProfile } from "@/hooks/useAuth";
 
 export const Route = createFileRoute("/_authenticated/admin")({
@@ -81,12 +82,16 @@ function AdminPage() {
         </div>
       ) : null}
 
-      <Tabs defaultValue="payments">
-        <TabsList className="grid w-full grid-cols-3">
+      <Tabs defaultValue="overview">
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="payments">Receipts</TabsTrigger>
           <TabsTrigger value="central">Central meter</TabsTrigger>
           <TabsTrigger value="submeters">Submeters</TabsTrigger>
         </TabsList>
+        <TabsContent value="overview" className="pt-5">
+          <PropertyOverview propertyId={active} />
+        </TabsContent>
         <TabsContent value="payments" className="pt-5">
           <PaymentsPanel propertyId={active} userId={user!.id} />
         </TabsContent>
