@@ -504,14 +504,38 @@ function SubmissionDetail({
 
         <div className="rounded-xl border border-border p-3">
           <div className="mb-2 flex items-center justify-between">
-            <p className="text-sm font-semibold">Structured OCR extraction</p>
+            <div>
+              <p className="text-sm font-semibold">OCR detected (not authoritative)</p>
+              <p className="text-xs text-muted-foreground">
+                Machine-read values. Nothing is credited until an administrator confirms them
+                against the original receipt.
+              </p>
+            </div>
             <StatusBadge state={e?.status ?? submission.status} />
           </div>
+          {e?.error_message ? (
+            <p className="mb-2 rounded-lg bg-destructive/10 p-2 text-xs text-destructive">
+              {e.error_message}
+            </p>
+          ) : null}
           {e ? (
             <div>
-              <Field label="Amount" value={e.amount ?? e.amount_paid} />
-              <Field label="Units" value={e.units_kwh} />
-              <Field label="Meter number" value={e.meter_number} />
+              <Field
+                label="Amount"
+                value={e.amount ?? e.amount_paid}
+                confidence={e.field_confidence?.["amount"] ?? null}
+              />
+              <Field
+                label="Units"
+                value={e.units_kwh}
+                confidence={e.field_confidence?.["units_kwh"] ?? null}
+              />
+              <Field
+                label="Meter number"
+                value={e.meter_number}
+                confidence={e.field_confidence?.["meter_number"] ?? null}
+              />
+
               <Field
                 label="Token"
                 value={
