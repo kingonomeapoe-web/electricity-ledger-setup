@@ -46,13 +46,13 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
     }
 
     const bytes = new Uint8Array(await download.data.arrayBuffer());
-    const result = await runVisionOcr({
-      base64: toBase64(bytes),
-      mimeType: evidence.mime_type ?? "image/jpeg",
-      kind: data.kind,
-    });
 
     if (data.kind === "meter_reading") {
+      const result = await runVisionOcr({
+        base64: toBase64(bytes),
+        mimeType: evidence.mime_type ?? "image/jpeg",
+        kind: data.kind,
+      });
       return {
         reading_kwh: num(result.data["reading_kwh"]),
         meter_number: str(result.data["meter_number"]),
@@ -75,7 +75,56 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
 
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
-    const fullToken = normalizeToken(str(result.data["token"]));
+    await supabaseAdmin.from("audit_logs").insert({
+      property_id: submission.property_id,
+      actor_id: context.userId,
+      event_type: "OCR_STARTED",
+      entity_type: "payment_submission",
+      entity_id: submission.id,
+      metadata: { evidence_id: evidence.id, model: "google/gemini-2.5-flash" } as never,
+    });
+
+    let result;
+    try {
+      result = await runVisionOcr({
+        base64: toBase64(bytes),
+        mimeType: evidence.mime_type ?? "image/jpeg",
+        kind: data.kind,
+      });
+    } catch (ocrError) {
+      const message = ocrError instanceof Error ? ocrError.message : "OCR failed";
+      await supabaseAdmin.from("ocr_extractions").insert({
+        evidence_id: evidence.id,
+        payment_submission_id: submission.id,
+        status: "failed",
+        provider: "lovable-ai",
+        model: "google/gemini-2.5-flash",
+        error_message: message,
+        structured_data: {} as never,
+        field_confidence: {} as never,
+        processed_at: new Date().toISOString(),
+      });
+      await supabaseAdmin.from("audit_logs").insert({
+        property_id: submission.property_id,
+        actor_id: context.userId,
+        event_type: "OCR_FAILED",
+        entity_type: "payment_submission",
+        entity_id: submission.id,
+        metadata: { error: message } as never,
+      });
+      throw new Error(message);
+    }
+
+    const fieldConfidenceRaw = result.data["field_confidence"];
+    const fieldConfidence: Record<string, number> = {};
+    if (fieldConfidenceRaw && typeof fieldConfidenceRaw === "object") {
+      for (const [key, value] of Object.entries(fieldConfidenceRaw as Record<string, unknown>)) {
+        const parsed = num(value);
+        if (parsed !== null) fieldConfidence[key] = Math.max(0, Math.min(100, parsed));
+      }
+    }
+
+    const fullToken = normalizeToken(str(result.data["token"]) ?? str(result.data["token_raw"]));
     const last4 = tokenLast4(fullToken) ?? str(result.data["token_last4"]);
     const fingerprint = await tokenFingerprint(fullToken);
     const meterNumber = str(result.data["meter_number"]);
@@ -84,6 +133,7 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
     const reference =
       str(result.data["transaction_reference"]) ?? str(result.data["transaction_number"]);
     const confidence = result.confidence;
+
 
     // ---- Automatic validation (advisory; never auto-credits or auto-rejects)
     const checks: ValidationCheck[] = [];
@@ -153,6 +203,63 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
           },
     );
 
+    if (fullToken && (fieldConfidence["token"] ?? 100) < 80) {
+      checks.push({
+        key: "token_confidence",
+        label: "Token confidence",
+        level: "warn",
+        detail: `Token could not be confidently read (${fieldConfidence["token"]}%). Verify it against the original receipt before loading.`,
+      });
+    }
+    if (units !== null && (fieldConfidence["units_kwh"] ?? 100) < 80) {
+      checks.push({
+        key: "units_confidence",
+        label: "Units confidence",
+        level: "warn",
+        detail: `Units could not be confidently read (${fieldConfidence["units_kwh"]}%).`,
+      });
+    }
+
+    checks.push(
+      reference
+        ? {
+            key: "reference",
+            label: "Transaction reference",
+            level: "pass",
+            detail: `Reference ${reference} read from the receipt.`,
+          }
+        : {
+            key: "reference",
+            label: "Transaction reference",
+            level: "warn",
+            detail: "No transaction reference could be read.",
+          },
+    );
+
+    const { data: residentAccount } = await supabaseAdmin
+      .from("resident_accounts")
+      .select("id")
+      .eq("resident_id", submission.resident_id)
+      .eq("property_id", submission.property_id)
+      .eq("active", true)
+      .maybeSingle();
+
+    checks.push(
+      residentAccount
+        ? {
+            key: "resident_property",
+            label: "Resident / property",
+            level: "pass",
+            detail: "Submission belongs to the resident's assigned property.",
+          }
+        : {
+            key: "resident_property",
+            label: "Resident / property",
+            level: "fail",
+            detail: "This resident has no active account on the property of this submission.",
+          },
+    );
+
     checks.push(
       confidence !== null && confidence >= 80
         ? { key: "confidence", label: "OCR confidence", level: "pass", detail: `${confidence}%` }
@@ -163,6 +270,7 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
             detail: `${confidence ?? "unknown"}% — read the original receipt carefully.`,
           },
     );
+
 
     // Duplicate detection across this property.
     const { data: siblings } = await supabaseAdmin
@@ -223,13 +331,17 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
     const hasFailure = checks.some((c) => c.level === "fail");
     const needsReview = hasFailure || confidence === null || confidence < 80;
 
-    const structured = {
+    const structured: Record<string, unknown> = {
       ...result.data,
-      token: undefined,
       token_fingerprint: fingerprint,
+      token_label: str(result.data["token_label"]),
+      field_confidence: fieldConfidence,
       validation: checks,
     };
-    delete (structured as Record<string, unknown>)["token"];
+    // The full token never lives in structured_data — only in the admin-only column.
+    delete structured["token"];
+    delete structured["token_raw"];
+
 
     const { data: inserted, error: insertError } = await supabaseAdmin
       .from("ocr_extractions")
@@ -257,7 +369,8 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
         tariff_class: str(result.data["tariff_class"]),
         tariff_rate: num(result.data["tariff_rate"]),
         confidence,
-        field_confidence: {} as never,
+        field_confidence: fieldConfidence as never,
+
         processed_at: new Date().toISOString(),
       })
       .select("id")
@@ -289,15 +402,34 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
       } as never,
     });
 
+    if (duplicateReference || duplicateToken || duplicateHash) {
+      await supabaseAdmin.from("audit_logs").insert({
+        property_id: submission.property_id,
+        actor_id: context.userId,
+        event_type: "DUPLICATE_DETECTED",
+        entity_type: "payment_submission",
+        entity_id: submission.id,
+        metadata: {
+          duplicate_reference: duplicateReference,
+          duplicate_token: duplicateToken,
+          duplicate_evidence_hash: duplicateHash,
+          transaction_reference: reference,
+          token_last4: last4,
+        } as never,
+      });
+    }
+
     return {
       extractionId: inserted.id,
       status: needsReview ? "needs_review" : "completed",
       confidence,
+      field_confidence: fieldConfidence,
       amount,
       units_kwh: units,
       meter_number: meterNumber,
       token_last4: last4,
       checks,
       raw_text: result.raw_text,
+
     };
   });

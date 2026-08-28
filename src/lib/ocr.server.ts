@@ -9,7 +9,8 @@ export type OcrResult = {
   data: Record<string, unknown>;
 };
 
-const RECEIPT_PROMPT = `You are reading a prepaid electricity payment receipt or bank transfer receipt.
+const RECEIPT_PROMPT = `You are reading a prepaid electricity payment receipt. It may be a photograph of paper, a screenshot, or an app receipt from ANY provider (OPay, Moniepoint, CoralPay, Palmpay, bank apps, or the electricity disco itself). Never assume a fixed layout — read semantically.
+
 Return STRICT JSON only, no prose, no markdown fences, with these keys (use null when absent):
 {
   "amount": number|null,
@@ -18,7 +19,8 @@ Return STRICT JSON only, no prose, no markdown fences, with these keys (use null
   "meter_number": string|null,
   "beneficiary_id": string|null,
   "token": string|null,
-  "token_last4": string|null,
+  "token_raw": string|null,
+  "token_label": string|null,
   "session_id": string|null,
   "transaction_time": "HH:MM"|null,
   "provider": string|null,
@@ -30,11 +32,29 @@ Return STRICT JSON only, no prose, no markdown fences, with these keys (use null
   "tariff_class": string|null,
   "tariff_rate": number|null,
   "raw_text": string|null,
-  "confidence": number
+  "confidence": number,
+  "field_confidence": {
+    "amount": number|null,
+    "units_kwh": number|null,
+    "meter_number": number|null,
+    "token": number|null,
+    "transaction_reference": number|null,
+    "transaction_date": number|null,
+    "customer_name": number|null
+  }
 }
-"token" is the full prepaid credit token exactly as printed (usually 20 digits, often shown in groups of four). Copy every digit.
-"units_kwh" is the number of electricity units purchased.
-"confidence" is 0-100 and reflects how certain you are of the extracted numbers.`;
+
+TOKEN EXTRACTION IS CRITICAL.
+- The prepaid credit token is normally 20 digits. It may be printed as one run ("00361492120748040104") or in groups of four separated by dashes or spaces ("6860-6758-7629-3468-3841", "5747 9870 0033 3628 8267").
+- It is NOT always labelled "Token". Accept any semantic equivalent: Token, Meter Token, Recharge Token, Electricity Token, Vend Token, Token Number, Credit Token, STS Token, PIN.
+- If no label is present but a 20-digit numeric group appears that is not the meter number, reference, phone number, account number, session id or date, treat it as the token.
+- "token" = digits only, in the printed order. "token_raw" = exactly as printed, including separators. "token_label" = the label text you found it under, or null.
+- NEVER guess or fabricate a token, meter number, amount or units. If unsure, return null and lower that field's confidence.
+
+"units_kwh" is the number of electricity units purchased (kWh), not the amount of money.
+"amount" is the money value paid, in the receipt's currency, as a plain number.
+"confidence" and every "field_confidence" value are 0-100.`;
+
 
 const METER_PROMPT = `You are reading the digital display of an electricity meter from a photograph.
 Return STRICT JSON only, no prose, no markdown fences:

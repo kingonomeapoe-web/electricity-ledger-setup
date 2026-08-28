@@ -48,8 +48,11 @@ type Extraction = {
   provider: string | null;
   confidence: number | null;
   session_id: string | null;
+  error_message: string | null;
+  field_confidence: Record<string, number> | null;
   structured_data: Record<string, unknown> | null;
 };
+
 
 type ValidationCheck = { key: string; label: string; level: "pass" | "warn" | "fail"; detail: string };
 
@@ -79,7 +82,8 @@ type Submission = {
 };
 
 const SELECT =
-  "id, status, submitted_at, rejection_reason, resident_id, apartment_id, evidence_id, apartments(unit_name), profiles(full_name), evidence_files(storage_path, original_filename, mime_type, sha256_hash, captured_at), ocr_extractions(id, status, amount, amount_paid, units_kwh, meter_number, beneficiary_id, token_last4, token_ciphertext, transaction_reference, transaction_number, customer_name, service_address, transaction_date, transaction_time, tariff_class, tariff_rate, provider, confidence, session_id, structured_data)";
+  "id, status, submitted_at, rejection_reason, resident_id, apartment_id, evidence_id, apartments(unit_name), profiles(full_name), evidence_files(storage_path, original_filename, mime_type, sha256_hash, captured_at), ocr_extractions(id, status, amount, amount_paid, units_kwh, meter_number, beneficiary_id, token_last4, token_ciphertext, transaction_reference, transaction_number, customer_name, service_address, transaction_date, transaction_time, tariff_class, tariff_rate, provider, confidence, session_id, error_message, field_confidence, structured_data)";
+
 
 function useDuplicates(submissions: Submission[]) {
   return useMemo(() => {
@@ -212,9 +216,19 @@ export function PaymentReviewPanel({
     return <p className="text-sm text-muted-foreground">No payment receipts submitted yet.</p>;
   }
 
+  const pendingCount = submissions.filter((s) =>
+    ["uploaded", "ocr_processed", "pending_approval"].includes(s.status),
+  ).length;
+
   return (
     <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <h3 className="text-sm font-semibold">Pending payments</h3>
+        <Badge variant={pendingCount ? "default" : "outline"}>{pendingCount}</Badge>
+        <span className="text-xs text-muted-foreground">awaiting administrative review</span>
+      </div>
       {/* Desktop data table */}
+
       <div className="hidden overflow-x-auto rounded-xl border border-border md:block">
         <Table>
           <TableHeader>
@@ -378,14 +392,36 @@ export function PaymentReviewPanel({
   );
 }
 
-function Field({ label, value }: { label: string; value: React.ReactNode }) {
+function Field({
+  label,
+  value,
+  confidence,
+}: {
+  label: string;
+  value: React.ReactNode;
+  confidence?: number | null | undefined;
+}) {
   return (
     <div className="flex justify-between gap-3 border-b border-border/60 py-1.5 text-sm last:border-0">
       <span className="text-muted-foreground">{label}</span>
-      <span className="text-right font-medium">{value ?? "—"}</span>
+      <span className="flex items-center gap-2 text-right font-medium">
+        <span>{value ?? "—"}</span>
+        {confidence !== null && confidence !== undefined ? (
+          <span
+            className={
+              confidence >= 80
+                ? "text-xs tabular-nums text-muted-foreground"
+                : "text-xs tabular-nums text-chart-5"
+            }
+          >
+            {confidence}%
+          </span>
+        ) : null}
+      </span>
     </div>
   );
 }
+
 
 function SubmissionDetail({
   submission,
@@ -468,14 +504,38 @@ function SubmissionDetail({
 
         <div className="rounded-xl border border-border p-3">
           <div className="mb-2 flex items-center justify-between">
-            <p className="text-sm font-semibold">Structured OCR extraction</p>
+            <div>
+              <p className="text-sm font-semibold">OCR detected (not authoritative)</p>
+              <p className="text-xs text-muted-foreground">
+                Machine-read values. Nothing is credited until an administrator confirms them
+                against the original receipt.
+              </p>
+            </div>
             <StatusBadge state={e?.status ?? submission.status} />
           </div>
+          {e?.error_message ? (
+            <p className="mb-2 rounded-lg bg-destructive/10 p-2 text-xs text-destructive">
+              {e.error_message}
+            </p>
+          ) : null}
           {e ? (
             <div>
-              <Field label="Amount" value={e.amount ?? e.amount_paid} />
-              <Field label="Units" value={e.units_kwh} />
-              <Field label="Meter number" value={e.meter_number} />
+              <Field
+                label="Amount"
+                value={e.amount ?? e.amount_paid}
+                confidence={e.field_confidence?.["amount"] ?? null}
+              />
+              <Field
+                label="Units"
+                value={e.units_kwh}
+                confidence={e.field_confidence?.["units_kwh"] ?? null}
+              />
+              <Field
+                label="Meter number"
+                value={e.meter_number}
+                confidence={e.field_confidence?.["meter_number"] ?? null}
+              />
+
               <Field
                 label="Token"
                 value={
@@ -521,8 +581,14 @@ function SubmissionDetail({
                     )}
                   </span>
                 }
+                confidence={e.field_confidence?.["token"] ?? null}
               />
-              <Field label="Transaction reference" value={e.transaction_reference} />
+              <Field
+                label="Transaction reference"
+                value={e.transaction_reference}
+                confidence={e.field_confidence?.["transaction_reference"] ?? null}
+              />
+
               <Field label="Session ID" value={e.session_id} />
               <Field label="Transaction number" value={e.transaction_number} />
               <Field label="Customer name" value={e.customer_name} />
