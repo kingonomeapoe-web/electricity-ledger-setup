@@ -402,15 +402,34 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
       } as never,
     });
 
+    if (duplicateReference || duplicateToken || duplicateHash) {
+      await supabaseAdmin.from("audit_logs").insert({
+        property_id: submission.property_id,
+        actor_id: context.userId,
+        event_type: "DUPLICATE_DETECTED",
+        entity_type: "payment_submission",
+        entity_id: submission.id,
+        metadata: {
+          duplicate_reference: duplicateReference,
+          duplicate_token: duplicateToken,
+          duplicate_evidence_hash: duplicateHash,
+          transaction_reference: reference,
+          token_last4: last4,
+        } as never,
+      });
+    }
+
     return {
       extractionId: inserted.id,
       status: needsReview ? "needs_review" : "completed",
       confidence,
+      field_confidence: fieldConfidence,
       amount,
       units_kwh: units,
       meter_number: meterNumber,
       token_last4: last4,
       checks,
       raw_text: result.raw_text,
+
     };
   });
