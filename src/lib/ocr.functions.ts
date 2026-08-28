@@ -9,15 +9,25 @@ const evidenceOcrInput = z.object({
   paymentSubmissionId: z.string().uuid().nullable().optional(),
 });
 
+export type ValidationCheck = {
+  key: string;
+  label: string;
+  level: "pass" | "warn" | "fail";
+  detail: string;
+};
+
 /**
  * Runs OCR on an already-stored evidence file. OCR output is advisory only:
- * nothing is confirmed, credited or posted here.
+ * nothing is confirmed, credited or posted here. For payment receipts the
+ * extraction is persisted, automatically validated and the submission moves to
+ * `pending_approval` so an administrator can review it.
  */
 export const runEvidenceOcr = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => evidenceOcrInput.parse(input))
   .handler(async ({ data, context }) => {
     const { runVisionOcr, toBase64, num, str } = await import("./ocr.server");
+    const { normalizeToken, tokenFingerprint, tokenLast4 } = await import("./token");
 
     // RLS scopes this read to evidence the caller is allowed to see.
     const { data: evidence, error } = await context.supabase
@@ -51,67 +61,243 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
       };
     }
 
-    // Payment receipt: persist the extraction against the submission.
-    let extractionId: string | null = null;
-    if (data.paymentSubmissionId) {
-      const { data: submission, error: submissionError } = await context.supabase
-        .from("payment_submissions")
-        .select("id, property_id, status")
-        .eq("id", data.paymentSubmissionId)
-        .maybeSingle();
-      if (submissionError) throw new Error(submissionError.message);
-      if (!submission) throw new Error("Payment submission not found or not accessible.");
-
-      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-      const confidence = result.confidence;
-      const needsReview = confidence === null || confidence < 80;
-
-      const { data: inserted, error: insertError } = await supabaseAdmin
-        .from("ocr_extractions")
-        .insert({
-          evidence_id: evidence.id,
-          payment_submission_id: submission.id,
-          status: needsReview ? "needs_review" : "completed",
-          provider: "lovable-ai",
-          model: "google/gemini-2.5-flash",
-          raw_text: result.raw_text,
-          structured_data: result.data as never,
-          amount: num(result.data["amount"]),
-          amount_paid: num(result.data["amount_paid"]) ?? num(result.data["amount"]),
-          units_kwh: num(result.data["units_kwh"]),
-          meter_number: str(result.data["meter_number"]),
-          beneficiary_id: str(result.data["beneficiary_id"]),
-          token_last4: str(result.data["token_last4"]),
-          transaction_reference: str(result.data["transaction_reference"]),
-          transaction_number: str(result.data["transaction_number"]),
-          customer_name: str(result.data["customer_name"]),
-          service_address: str(result.data["service_address"]),
-          transaction_date: str(result.data["transaction_date"]),
-          tariff_class: str(result.data["tariff_class"]),
-          tariff_rate: num(result.data["tariff_rate"]),
-          confidence,
-          field_confidence: {} as never,
-          processed_at: new Date().toISOString(),
-        })
-        .select("id")
-        .single();
-      if (insertError) throw new Error(insertError.message);
-      extractionId = inserted.id;
-
-      if (submission.status === "uploaded") {
-        await supabaseAdmin
-          .from("payment_submissions")
-          .update({ status: "ocr_processed" })
-          .eq("id", submission.id);
-      }
+    if (!data.paymentSubmissionId) {
+      throw new Error("A payment submission is required for receipt OCR.");
     }
 
+    const { data: submission, error: submissionError } = await context.supabase
+      .from("payment_submissions")
+      .select("id, property_id, resident_id, apartment_id, evidence_id, status")
+      .eq("id", data.paymentSubmissionId)
+      .maybeSingle();
+    if (submissionError) throw new Error(submissionError.message);
+    if (!submission) throw new Error("Payment submission not found or not accessible.");
+
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+
+    const fullToken = normalizeToken(str(result.data["token"]));
+    const last4 = tokenLast4(fullToken) ?? str(result.data["token_last4"]);
+    const fingerprint = await tokenFingerprint(fullToken);
+    const meterNumber = str(result.data["meter_number"]);
+    const units = num(result.data["units_kwh"]);
+    const amount = num(result.data["amount"]);
+    const reference =
+      str(result.data["transaction_reference"]) ?? str(result.data["transaction_number"]);
+    const confidence = result.confidence;
+
+    // ---- Automatic validation (advisory; never auto-credits or auto-rejects)
+    const checks: ValidationCheck[] = [];
+
+    const { data: meter } = await supabaseAdmin
+      .from("meters")
+      .select("identifier, meter_number")
+      .eq("property_id", submission.property_id)
+      .eq("meter_type", "prepaid_main")
+      .eq("active", true)
+      .maybeSingle();
+
+    const expectedMeters = [meter?.meter_number, meter?.identifier]
+      .filter(Boolean)
+      .map((m) => String(m).replace(/\D/g, ""));
+    const readMeter = meterNumber ? meterNumber.replace(/\D/g, "") : null;
+    if (!readMeter) {
+      checks.push({
+        key: "meter_match",
+        label: "Meter number",
+        level: "warn",
+        detail: "No meter number could be read from the receipt.",
+      });
+    } else if (expectedMeters.length === 0) {
+      checks.push({
+        key: "meter_match",
+        label: "Meter number",
+        level: "warn",
+        detail: "No main prepaid meter number is configured for this property.",
+      });
+    } else if (expectedMeters.some((m) => m === readMeter || m.endsWith(readMeter) || readMeter.endsWith(m))) {
+      checks.push({
+        key: "meter_match",
+        label: "Meter number",
+        level: "pass",
+        detail: `Matches the property's main prepaid meter (${meterNumber}).`,
+      });
+    } else {
+      checks.push({
+        key: "meter_match",
+        label: "Meter number",
+        level: "fail",
+        detail: `Receipt meter ${meterNumber} does not match the property meter ${meter?.meter_number ?? meter?.identifier}.`,
+      });
+    }
+
+    checks.push(
+      units !== null && units > 0
+        ? { key: "units", label: "Units", level: "pass", detail: `${units} kWh read from the receipt.` }
+        : { key: "units", label: "Units", level: "warn", detail: "No unit value could be read." },
+    );
+
+    checks.push(
+      amount !== null && amount > 0
+        ? { key: "amount", label: "Amount", level: "pass", detail: `${amount} read from the receipt.` }
+        : { key: "amount", label: "Amount", level: "warn", detail: "No amount could be read." },
+    );
+
+    checks.push(
+      fullToken
+        ? { key: "token", label: "Token", level: "pass", detail: `Token ending ${last4} captured.` }
+        : {
+            key: "token",
+            label: "Token",
+            level: "warn",
+            detail: "No prepaid token was found — confirm this receipt is a token purchase.",
+          },
+    );
+
+    checks.push(
+      confidence !== null && confidence >= 80
+        ? { key: "confidence", label: "OCR confidence", level: "pass", detail: `${confidence}%` }
+        : {
+            key: "confidence",
+            label: "OCR confidence",
+            level: "warn",
+            detail: `${confidence ?? "unknown"}% — read the original receipt carefully.`,
+          },
+    );
+
+    // Duplicate detection across this property.
+    const { data: siblings } = await supabaseAdmin
+      .from("ocr_extractions")
+      .select(
+        "id, payment_submission_id, transaction_reference, transaction_number, structured_data, payment_submissions!inner(property_id)",
+      )
+      .eq("payment_submissions.property_id", submission.property_id);
+
+    const others = (siblings ?? []).filter(
+      (row) => row.payment_submission_id !== submission.id,
+    ) as Array<{
+      transaction_reference: string | null;
+      transaction_number: string | null;
+      structured_data: Record<string, unknown> | null;
+    }>;
+
+    const duplicateReference =
+      !!reference &&
+      others.some((row) => (row.transaction_reference ?? row.transaction_number) === reference);
+    const duplicateToken =
+      !!fingerprint &&
+      others.some((row) => (row.structured_data?.["token_fingerprint"] as string) === fingerprint);
+
+    let duplicateHash = false;
+    if (evidence.sha256_hash) {
+      const { data: hashMatches } = await supabaseAdmin
+        .from("evidence_files")
+        .select("id")
+        .eq("property_id", submission.property_id)
+        .eq("evidence_type", "payment_receipt")
+        .eq("sha256_hash", evidence.sha256_hash);
+      duplicateHash = (hashMatches ?? []).filter((row) => row.id !== evidence.id).length > 0;
+    }
+
+    checks.push(
+      duplicateReference || duplicateToken || duplicateHash
+        ? {
+            key: "duplicate",
+            label: "Duplicate check",
+            level: "fail",
+            detail: [
+              duplicateReference ? "reference already used" : null,
+              duplicateToken ? "token already submitted" : null,
+              duplicateHash ? "identical file already uploaded" : null,
+            ]
+              .filter(Boolean)
+              .join(", "),
+          }
+        : {
+            key: "duplicate",
+            label: "Duplicate check",
+            level: "pass",
+            detail: "No matching reference, token or file hash found.",
+          },
+    );
+
+    const hasFailure = checks.some((c) => c.level === "fail");
+    const needsReview = hasFailure || confidence === null || confidence < 80;
+
+    const structured = {
+      ...result.data,
+      token: undefined,
+      token_fingerprint: fingerprint,
+      validation: checks,
+    };
+    delete (structured as Record<string, unknown>)["token"];
+
+    const { data: inserted, error: insertError } = await supabaseAdmin
+      .from("ocr_extractions")
+      .insert({
+        evidence_id: evidence.id,
+        payment_submission_id: submission.id,
+        status: needsReview ? "needs_review" : "completed",
+        provider: str(result.data["provider"]) ?? "lovable-ai",
+        model: "google/gemini-2.5-flash",
+        raw_text: result.raw_text,
+        structured_data: structured as never,
+        amount,
+        amount_paid: num(result.data["amount_paid"]) ?? amount,
+        units_kwh: units,
+        meter_number: meterNumber,
+        beneficiary_id: str(result.data["beneficiary_id"]),
+        token_ciphertext: fullToken,
+        token_last4: last4,
+        transaction_reference: str(result.data["transaction_reference"]),
+        transaction_number: str(result.data["transaction_number"]),
+        session_id: str(result.data["session_id"]),
+        customer_name: str(result.data["customer_name"]),
+        service_address: str(result.data["service_address"]),
+        transaction_date: str(result.data["transaction_date"]),
+        tariff_class: str(result.data["tariff_class"]),
+        tariff_rate: num(result.data["tariff_rate"]),
+        confidence,
+        field_confidence: {} as never,
+        processed_at: new Date().toISOString(),
+      })
+      .select("id")
+      .single();
+    if (insertError) throw new Error(insertError.message);
+
+    // Lifecycle: uploaded -> ocr_processed -> pending_approval
+    if (submission.status === "uploaded" || submission.status === "ocr_processed") {
+      await supabaseAdmin
+        .from("payment_submissions")
+        .update({ status: "pending_approval" })
+        .eq("id", submission.id);
+    }
+
+    await supabaseAdmin.from("audit_logs").insert({
+      property_id: submission.property_id,
+      actor_id: context.userId,
+      event_type: "OCR_COMPLETED",
+      entity_type: "payment_submission",
+      entity_id: submission.id,
+      old_data: { status: submission.status },
+      new_data: { status: "pending_approval", ocr_extraction_id: inserted.id },
+      metadata: {
+        confidence,
+        units_kwh: units,
+        amount,
+        token_last4: last4,
+        validation: checks as never,
+      } as never,
+    });
+
     return {
-      extractionId,
-      confidence: result.confidence,
-      amount: num(result.data["amount"]),
-      units_kwh: num(result.data["units_kwh"]),
-      meter_number: str(result.data["meter_number"]),
+      extractionId: inserted.id,
+      status: needsReview ? "needs_review" : "completed",
+      confidence,
+      amount,
+      units_kwh: units,
+      meter_number: meterNumber,
+      token_last4: last4,
+      checks,
       raw_text: result.raw_text,
     };
   });
