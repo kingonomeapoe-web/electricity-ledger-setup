@@ -43,7 +43,7 @@ export function AppShell({
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl px-4 py-6">
+      <main className={`mx-auto ${width} px-4 py-6`}>
         <div className="mb-5">
           <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
           {subtitle ? <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p> : null}
