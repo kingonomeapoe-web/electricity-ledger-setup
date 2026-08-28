@@ -308,9 +308,47 @@ function SetupPage() {
             <section className="rounded-xl border border-border bg-card p-5">
               <h2 className="text-sm font-semibold">Main prepaid meter</h2>
               {meterQuery.data ? (
-                <p className="mt-2 text-sm text-muted-foreground">
-                  {meterQuery.data.identifier} · {meterQuery.data.meter_number ?? "no meter number"}
-                </p>
+                <>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    {meterQuery.data.identifier} · {meterQuery.data.meter_number ?? "no meter number"}
+                  </p>
+                  <div className="mt-4 border-t border-border pt-4">
+                    <h3 className="text-sm font-medium">Opening balance</h3>
+                    {openingReadingQuery.isLoading ? (
+                      <Loader2 className="mt-2 h-4 w-4 animate-spin text-muted-foreground" />
+                    ) : openingReadingQuery.data ? (
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {formatKwh(openingReadingQuery.data.reading_kwh)} recorded on{" "}
+                        {formatDateTime(openingReadingQuery.data.captured_at)}. Opening records are
+                        immutable.
+                      </p>
+                    ) : (
+                      <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-end">
+                        <div className="space-y-1.5">
+                          <Label htmlFor="obal">Current units on the meter (kWh)</Label>
+                          <Input
+                            id="obal"
+                            type="number"
+                            min="0"
+                            step="0.001"
+                            inputMode="decimal"
+                            value={openingBalance}
+                            onChange={(e) => setOpeningBalance(e.target.value)}
+                          />
+                        </div>
+                        <Button
+                          onClick={() => void saveOpeningBalance()}
+                          disabled={!openingBalance || busyKey === "central-opening"}
+                        >
+                          {busyKey === "central-opening" ? (
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          ) : null}
+                          Record opening balance
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </>
               ) : (
                 <>
                   <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -346,16 +384,66 @@ function SetupPage() {
                 Add apartment
               </Button>
 
-              <ul className="mt-4 space-y-1 text-sm text-muted-foreground">
-                {(apartmentsQuery.data ?? []).map((apartment) => (
-                  <li key={apartment.id}>
-                    {apartment.unit_name} —{" "}
-                    {(apartment as unknown as { submeters: Array<{ identifier: string }> }).submeters?.[0]
-                      ?.identifier ?? "no submeter"}
-                  </li>
-                ))}
-              </ul>
+              {apartmentsQuery.isLoading ? (
+                <Loader2 className="mt-4 h-4 w-4 animate-spin text-muted-foreground" />
+              ) : apartmentsQuery.isError ? (
+                <p className="mt-4 text-sm text-destructive">Unable to load apartments.</p>
+              ) : (apartmentsQuery.data ?? []).length === 0 ? (
+                <p className="mt-4 text-sm text-muted-foreground">No apartment has been created yet.</p>
+              ) : (
+                <ul className="mt-4 divide-y divide-border">
+                  {(apartmentsQuery.data ?? []).map((apartment) => {
+                    const submeter = apartment.submeters?.[0];
+                    const opening = submeter?.submeter_readings?.[0];
+                    return (
+                      <li key={apartment.id} className="py-3">
+                        <p className="text-sm font-medium">{apartment.unit_name}</p>
+                        {!submeter ? (
+                          <p className="text-xs text-muted-foreground">No submeter has been assigned.</p>
+                        ) : opening ? (
+                          <p className="text-xs text-muted-foreground">
+                            {submeter.identifier} · initial reading {formatKwh(opening.reading_kwh)}
+                          </p>
+                        ) : (
+                          <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-end">
+                            <div className="space-y-1.5">
+                              <Label htmlFor={`sr-${submeter.id}`}>
+                                {submeter.identifier} — initial reading (kWh)
+                              </Label>
+                              <Input
+                                id={`sr-${submeter.id}`}
+                                type="number"
+                                min="0"
+                                step="0.001"
+                                inputMode="decimal"
+                                value={submeterOpening[submeter.id] ?? ""}
+                                onChange={(e) =>
+                                  setSubmeterOpening((current) => ({
+                                    ...current,
+                                    [submeter.id]: e.target.value,
+                                  }))
+                                }
+                              />
+                            </div>
+                            <Button
+                              variant="secondary"
+                              onClick={() => void saveSubmeterOpening(submeter.id)}
+                              disabled={!submeterOpening[submeter.id] || busyKey === submeter.id}
+                            >
+                              {busyKey === submeter.id ? (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              ) : null}
+                              Record reading
+                            </Button>
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
             </section>
+
 
             <section className="rounded-xl border border-border bg-card p-5">
               <h2 className="text-sm font-semibold">Link a resident</h2>
