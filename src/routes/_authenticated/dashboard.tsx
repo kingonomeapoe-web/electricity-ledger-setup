@@ -62,11 +62,18 @@ function Dashboard() {
         {adminMemberships.length > 0 ? (
           <>
             <Card
+              icon={ClipboardList}
+              title="Review & reconciliation"
+              body="Approve payments, confirm readings, classify variances and audit every action."
+              to="/review"
+            />
+            <Card
               icon={ShieldCheck}
               title="Evidence & readings"
               body="Review receipts, record token loads, capture central and submeter readings."
               to="/admin"
             />
+
             <Card
               icon={Building2}
               title="Property setup"
