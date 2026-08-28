@@ -55,6 +55,9 @@ function SetupPage() {
   const [meterNumber, setMeterNumber] = useState("");
   const [residentEmail, setResidentEmail] = useState("");
   const [apartmentId, setApartmentId] = useState("");
+  const [openingBalance, setOpeningBalance] = useState("");
+  const [submeterOpening, setSubmeterOpening] = useState<Record<string, string>>({});
+  const [busyKey, setBusyKey] = useState<string | null>(null);
 
   const active = propertyId || adminMemberships[0]?.property_id || "";
 
@@ -64,11 +67,24 @@ function SetupPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("apartments")
-        .select("id, unit_name, submeters(identifier)")
+        .select("id, unit_name, submeters(id, identifier, submeter_readings(id, reading_kwh, reading_kind, captured_at))")
         .eq("property_id", active)
         .order("unit_name");
       if (error) throw error;
-      return data;
+      return data as unknown as Array<{
+        id: string;
+        unit_name: string;
+        submeters: Array<{
+          id: string;
+          identifier: string;
+          submeter_readings: Array<{
+            id: string;
+            reading_kwh: number;
+            reading_kind: string;
+            captured_at: string;
+          }>;
+        }>;
+      }>;
     },
   });
 
@@ -86,6 +102,86 @@ function SetupPage() {
       return data;
     },
   });
+
+  const openingReadingQuery = useQuery({
+    queryKey: ["central-opening", meterQuery.data?.id],
+    enabled: !!meterQuery.data?.id,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("central_meter_readings")
+        .select("id, reading_kwh, captured_at")
+        .eq("meter_id", meterQuery.data!.id)
+        .eq("reading_kind", "opening")
+        .maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  /** Opening records are written once; existing ones are never overwritten. */
+  async function saveOpeningBalance() {
+    const meter = meterQuery.data;
+    const value = Number(openingBalance);
+    if (!meter || !Number.isFinite(value) || value < 0) return;
+    if (openingReadingQuery.data) {
+      toast.error("An opening balance already exists and cannot be replaced.");
+      return;
+    }
+    setBusyKey("central-opening");
+    const { data: user } = await supabase.auth.getUser();
+    const now = new Date().toISOString();
+    const { error } = await supabase.from("central_meter_readings").insert({
+      meter_id: meter.id,
+      reading_kwh: value,
+      reading_kind: "opening",
+      source: "manual",
+      confirmed_value_kwh: value,
+      captured_at: now,
+      confirmed_at: now,
+      captured_by: user.user!.id,
+      confirmed_by: user.user!.id,
+      notes: "Opening central meter balance captured during property setup",
+    });
+    setBusyKey(null);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    setOpeningBalance("");
+    toast.success("Opening central meter balance recorded.");
+    await queryClient.invalidateQueries({ queryKey: ["central-opening"] });
+    await queryClient.invalidateQueries({ queryKey: ["property-overview"] });
+  }
+
+  async function saveSubmeterOpening(submeterId: string) {
+    const value = Number(submeterOpening[submeterId]);
+    if (!Number.isFinite(value) || value < 0) return;
+    setBusyKey(submeterId);
+    const { data: user } = await supabase.auth.getUser();
+    const now = new Date().toISOString();
+    const { error } = await supabase.from("submeter_readings").insert({
+      submeter_id: submeterId,
+      reading_kwh: value,
+      reading_kind: "opening",
+      source: "manual",
+      confirmed_value_kwh: value,
+      captured_at: now,
+      confirmed_at: now,
+      captured_by: user.user!.id,
+      confirmed_by: user.user!.id,
+      notes: "Initial submeter reading captured during property setup",
+    });
+    setBusyKey(null);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    setSubmeterOpening((current) => ({ ...current, [submeterId]: "" }));
+    toast.success("Initial submeter reading recorded.");
+    await queryClient.invalidateQueries({ queryKey: ["apartments"] });
+    await queryClient.invalidateQueries({ queryKey: ["property-overview"] });
+  }
+
 
   const createPropertyMutation = useMutation({
     mutationFn: () => create({ data: { name: propertyName, address: address || null } }),
