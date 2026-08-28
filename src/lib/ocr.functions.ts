@@ -331,13 +331,17 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
     const hasFailure = checks.some((c) => c.level === "fail");
     const needsReview = hasFailure || confidence === null || confidence < 80;
 
-    const structured = {
+    const structured: Record<string, unknown> = {
       ...result.data,
-      token: undefined,
       token_fingerprint: fingerprint,
+      token_label: str(result.data["token_label"]),
+      field_confidence: fieldConfidence,
       validation: checks,
     };
-    delete (structured as Record<string, unknown>)["token"];
+    // The full token never lives in structured_data — only in the admin-only column.
+    delete structured["token"];
+    delete structured["token_raw"];
+
 
     const { data: inserted, error: insertError } = await supabaseAdmin
       .from("ocr_extractions")
