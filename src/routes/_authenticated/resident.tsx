@@ -298,6 +298,43 @@ function ResidentPage() {
         </p>
       </section>
 
+      <section className="mt-5 rounded-2xl border border-border bg-card p-5">
+        <h2 className="text-sm font-semibold">My submeter</h2>
+        {submeterQuery.isLoading ? (
+          <Loader2 className="mt-2 h-4 w-4 animate-spin text-muted-foreground" />
+        ) : submeterQuery.isError ? (
+          <p className="mt-2 text-sm text-destructive">Unable to load electricity account.</p>
+        ) : !submeterQuery.data ? (
+          <p className="mt-2 text-sm text-muted-foreground">No submeter has been assigned.</p>
+        ) : (
+          <>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {submeterQuery.data.identifier}
+              {submeterQuery.data.meter_number ? ` · ${submeterQuery.data.meter_number}` : ""}
+            </p>
+            {submeterQuery.data.submeter_readings.length === 0 ? (
+              <p className="mt-3 text-sm text-muted-foreground">No reading has been recorded yet.</p>
+            ) : (
+              <ul className="mt-3 divide-y divide-border text-sm">
+                {[...submeterQuery.data.submeter_readings]
+                  .sort((a, b) => b.captured_at.localeCompare(a.captured_at))
+                  .slice(0, 10)
+                  .map((reading) => (
+                    <li key={reading.id} className="flex items-center justify-between py-2">
+                      <span className="tabular-nums">{Number(reading.reading_kwh).toFixed(3)} kWh</span>
+                      <span className="text-xs text-muted-foreground">
+                        {reading.reading_kind} · {new Date(reading.captured_at).toLocaleString()}
+                      </span>
+                    </li>
+                  ))}
+              </ul>
+            )}
+          </>
+        )}
+      </section>
+
+
+
       <h2 className="mt-8 mb-3 text-sm font-semibold">My submissions</h2>
       {submissionsQuery.isLoading ? (
         <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
