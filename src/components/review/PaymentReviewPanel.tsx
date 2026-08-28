@@ -46,7 +46,16 @@ type Extraction = {
   tariff_rate: number | null;
   provider: string | null;
   confidence: number | null;
+  session_id: string | null;
+  structured_data: Record<string, unknown> | null;
 };
+
+type ValidationCheck = { key: string; label: string; level: "pass" | "warn" | "fail"; detail: string };
+
+function validationOf(e: Extraction | undefined): ValidationCheck[] {
+  const raw = e?.structured_data?.["validation"];
+  return Array.isArray(raw) ? (raw as ValidationCheck[]) : [];
+}
 
 type Submission = {
   id: string;
@@ -69,7 +78,7 @@ type Submission = {
 };
 
 const SELECT =
-  "id, status, submitted_at, rejection_reason, resident_id, apartment_id, evidence_id, apartments(unit_name), profiles(full_name), evidence_files(storage_path, original_filename, mime_type, sha256_hash, captured_at), ocr_extractions(id, status, amount, amount_paid, units_kwh, meter_number, beneficiary_id, token_last4, token_ciphertext, transaction_reference, transaction_number, customer_name, service_address, transaction_date, transaction_time, tariff_class, tariff_rate, provider, confidence)";
+  "id, status, submitted_at, rejection_reason, resident_id, apartment_id, evidence_id, apartments(unit_name), profiles(full_name), evidence_files(storage_path, original_filename, mime_type, sha256_hash, captured_at), ocr_extractions(id, status, amount, amount_paid, units_kwh, meter_number, beneficiary_id, token_last4, token_ciphertext, transaction_reference, transaction_number, customer_name, service_address, transaction_date, transaction_time, tariff_class, tariff_rate, provider, confidence, session_id, structured_data)";
 
 function useDuplicates(submissions: Submission[]) {
   return useMemo(() => {
@@ -81,7 +90,8 @@ function useDuplicates(submissions: Submission[]) {
       const e = s.ocr_extractions?.[0];
       const ref = e?.transaction_reference ?? e?.transaction_number;
       if (ref) refCount.set(ref, (refCount.get(ref) ?? 0) + 1);
-      if (e?.token_last4) tokenCount.set(e.token_last4, (tokenCount.get(e.token_last4) ?? 0) + 1);
+      const fp = (e?.structured_data?.["token_fingerprint"] as string | undefined) ?? e?.token_last4;
+      if (fp) tokenCount.set(fp, (tokenCount.get(fp) ?? 0) + 1);
       const hash = s.evidence_files?.sha256_hash;
       if (hash) hashCount.set(hash, (hashCount.get(hash) ?? 0) + 1);
     }
@@ -91,7 +101,8 @@ function useDuplicates(submissions: Submission[]) {
       const ref = e?.transaction_reference ?? e?.transaction_number;
       const flags: string[] = [];
       if (ref && (refCount.get(ref) ?? 0) > 1) flags.push("Duplicate reference");
-      if (e?.token_last4 && (tokenCount.get(e.token_last4) ?? 0) > 1) flags.push("Duplicate token");
+      const fp = (e?.structured_data?.["token_fingerprint"] as string | undefined) ?? e?.token_last4;
+      if (fp && (tokenCount.get(fp) ?? 0) > 1) flags.push("Duplicate token");
       const hash = s.evidence_files?.sha256_hash;
       if (hash && (hashCount.get(hash) ?? 0) > 1) flags.push("Duplicate evidence hash");
       return flags;
@@ -422,6 +433,31 @@ function SubmissionDetail({
         </div>
       ) : null}
 
+      {validationOf(e).length ? (
+        <div className="rounded-xl border border-border p-3">
+          <p className="mb-2 text-sm font-semibold">Automatic validation</p>
+          <ul className="grid gap-1.5 sm:grid-cols-2">
+            {validationOf(e).map((check) => (
+              <li key={check.key} className="flex items-start gap-2 text-xs">
+                <span
+                  className={
+                    check.level === "pass"
+                      ? "mt-1 h-2 w-2 shrink-0 rounded-full bg-chart-2"
+                      : check.level === "warn"
+                        ? "mt-1 h-2 w-2 shrink-0 rounded-full bg-chart-5"
+                        : "mt-1 h-2 w-2 shrink-0 rounded-full bg-destructive"
+                  }
+                />
+                <span>
+                  <span className="font-medium text-foreground">{check.label}: </span>
+                  <span className="text-muted-foreground">{check.detail}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
       <div className="grid gap-4 md:grid-cols-2">
         <EvidencePreview
           storagePath={submission.evidence_files?.storage_path}
@@ -486,6 +522,7 @@ function SubmissionDetail({
                 }
               />
               <Field label="Transaction reference" value={e.transaction_reference} />
+              <Field label="Session ID" value={e.session_id} />
               <Field label="Transaction number" value={e.transaction_number} />
               <Field label="Customer name" value={e.customer_name} />
               <Field label="Service address" value={e.service_address} />
@@ -525,14 +562,16 @@ function SubmissionDetail({
 
       {!terminal ? (
         <div className="flex flex-wrap gap-2">
-          {e ? (
+          {e && submission.status !== "approved_for_loading" && submission.status !== "loaded" ? (
             <Button size="sm" variant="secondary" onClick={onApprove}>
               Approve for loading
             </Button>
           ) : null}
-          <Button size="sm" onClick={onCredit}>
-            <Fuel className="mr-2 h-4 w-4" /> Load token &amp; credit
-          </Button>
+          {submission.status === "approved_for_loading" || submission.status === "loaded" ? (
+            <Button size="sm" onClick={onCredit}>
+              <Fuel className="mr-2 h-4 w-4" /> Load token &amp; credit
+            </Button>
+          ) : null}
           <Button size="sm" variant="ghost" onClick={onMarkDuplicate}>
             Mark duplicate
           </Button>
