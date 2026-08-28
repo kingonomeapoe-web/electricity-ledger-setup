@@ -110,6 +110,34 @@ function ResidentPage() {
     },
   });
 
+  const submeterQuery = useQuery({
+    queryKey: ["resident-submeter", account?.apartment_id],
+    enabled: !!account?.apartment_id,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("submeters")
+        .select(
+          "id, identifier, meter_number, submeter_readings(id, reading_kwh, units_consumed_kwh, reading_kind, captured_at)",
+        )
+        .eq("apartment_id", account!.apartment_id)
+        .eq("active", true)
+        .maybeSingle();
+      if (error) throw error;
+      return data as unknown as {
+        id: string;
+        identifier: string;
+        meter_number: string | null;
+        submeter_readings: Array<{
+          id: string;
+          reading_kwh: number;
+          units_consumed_kwh: number | null;
+          reading_kind: string;
+          captured_at: string;
+        }>;
+      } | null;
+    },
+  });
+
   const submissionsQuery = useQuery({
     queryKey: ["my-submissions", user?.id],
     enabled: !!user,
@@ -124,6 +152,7 @@ function ResidentPage() {
       return data;
     },
   });
+
 
   async function handleUploaded(evidence: EvidenceFile) {
     setWorking("Recording your receipt…");
