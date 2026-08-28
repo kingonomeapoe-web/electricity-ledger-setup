@@ -25,6 +25,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { runEvidenceOcr } from "@/lib/ocr.functions";
 import { revealPaymentToken } from "@/lib/review.functions";
 import { formatDateTime, logAudit, maskToken } from "@/lib/audit";
+import { groupToken } from "@/lib/token";
 
 type Extraction = {
   id: string;
@@ -609,6 +610,10 @@ function CreditFlow({
   );
   const [balanceBefore, setBalanceBefore] = useState("");
   const [notes, setNotes] = useState("");
+  const [token, setToken] = useState<string | null>(null);
+  const [revealing, setRevealing] = useState(false);
+  const [acknowledgeMismatch, setAcknowledgeMismatch] = useState(false);
+  const reveal = useServerFn(revealPaymentToken);
 
   const meterQuery = useQuery({
     queryKey: ["main-meter", propertyId],
@@ -627,6 +632,7 @@ function CreditFlow({
 
   const units = Number(unitsLoaded);
   const before = Number(balanceBefore);
+  const expected = Math.round((before + units) * 1000) / 1000;
   const ready =
     !!loadEvidenceId &&
     Number.isFinite(units) &&
@@ -651,6 +657,51 @@ function CreditFlow({
         filename={submission.evidence_files?.original_filename}
         className="max-h-56 overflow-hidden"
       />
+
+      <div className="rounded-xl border border-border p-3 text-sm">
+        <p className="font-semibold">Token to load</p>
+        <p className="mt-1 flex items-center gap-2 font-mono text-xs">
+          {token ? groupToken(token) : maskToken(extraction?.token_last4)}
+          {token ? (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-6 w-6"
+              onClick={() => {
+                void navigator.clipboard.writeText(token);
+                toast.success("Token copied");
+              }}
+            >
+              <Copy className="h-3 w-3" />
+            </Button>
+          ) : extraction ? (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-6 w-6"
+              disabled={revealing}
+              onClick={async () => {
+                setRevealing(true);
+                try {
+                  const result = await reveal({ data: { extractionId: extraction.id } });
+                  const value = (result as { token: string | null }).token;
+                  if (!value) toast.info("No full token was stored for this receipt.");
+                  else setToken(value);
+                } catch (error) {
+                  toast.error(error instanceof Error ? error.message : "Reveal failed");
+                } finally {
+                  setRevealing(false);
+                }
+              }}
+            >
+              <Eye className="h-3 w-3" />
+            </Button>
+          ) : null}
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Load this token onto the central prepaid meter now, then evidence it below.
+        </p>
+      </div>
 
       <EvidenceUploader
         propertyId={propertyId}
@@ -688,20 +739,47 @@ function CreditFlow({
 
       {ready ? (
         <>
-          <p className="rounded-lg bg-muted/50 p-3 text-xs">
-            Expected central meter balance after loading:{" "}
+          <div className="grid gap-1 rounded-lg bg-muted/50 p-3 text-xs">
+            <span>Balance before loading: {before.toFixed(3)} kWh</span>
+            <span>Units being loaded: {units.toFixed(3)} kWh</span>
             <span className="font-medium text-foreground">
-              {Math.round((before + units) * 1000) / 1000} kWh
+              Expected balance after loading: {expected.toFixed(3)} kWh
             </span>
-            . The confirmed reading below must match.
-          </p>
+            <span>
+              The photographed post-load reading must match this figure within 0.5 kWh, otherwise the
+              variance must be explained before the resident is credited.
+            </span>
+          </div>
           <ReadingCapture
             propertyId={propertyId}
             evidenceType="central_meter_reading"
             label="Central meter display after loading"
             hint="Photograph the meter so the post-load balance is evidenced."
             confirmLabel="Confirm reading and credit resident"
+            extra={(value) =>
+              value === null ? null : (
+                <div
+                  className={
+                    Math.abs(value - expected) <= 0.5
+                      ? "rounded-lg border border-chart-2/40 bg-chart-2/10 p-3 text-xs"
+                      : "rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-xs"
+                  }
+                >
+                  Expected {expected.toFixed(3)} kWh · detected {value.toFixed(3)} kWh · difference{" "}
+                  {(value - expected).toFixed(3)} kWh —{" "}
+                  {Math.abs(value - expected) <= 0.5
+                    ? "reconciles"
+                    : "does not reconcile; explain it in the notes above before confirming"}
+                </div>
+              )
+            }
             onConfirm={async (reading) => {
+              const drift = Math.abs(reading.readingKwh - expected);
+              if (drift > 0.5 && !acknowledgeMismatch && !notes.trim()) {
+                throw new Error(
+                  `Post-load reading ${reading.readingKwh} kWh differs from the expected ${expected} kWh by ${drift.toFixed(3)} kWh. Add an explanation in the notes, or re-photograph the meter.`,
+                );
+              }
               const now = new Date().toISOString();
               const { data: inserted, error } = await supabase
                 .from("central_meter_readings")
