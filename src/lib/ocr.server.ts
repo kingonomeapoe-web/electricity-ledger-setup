@@ -17,7 +17,11 @@ Return STRICT JSON only, no prose, no markdown fences, with these keys (use null
   "units_kwh": number|null,
   "meter_number": string|null,
   "beneficiary_id": string|null,
+  "token": string|null,
   "token_last4": string|null,
+  "session_id": string|null,
+  "transaction_time": "HH:MM"|null,
+  "provider": string|null,
   "transaction_reference": string|null,
   "transaction_number": string|null,
   "customer_name": string|null,
@@ -28,6 +32,8 @@ Return STRICT JSON only, no prose, no markdown fences, with these keys (use null
   "raw_text": string|null,
   "confidence": number
 }
+"token" is the full prepaid credit token exactly as printed (usually 20 digits, often shown in groups of four). Copy every digit.
+"units_kwh" is the number of electricity units purchased.
 "confidence" is 0-100 and reflects how certain you are of the extracted numbers.`;
 
 const METER_PROMPT = `You are reading the digital display of an electricity meter from a photograph.
