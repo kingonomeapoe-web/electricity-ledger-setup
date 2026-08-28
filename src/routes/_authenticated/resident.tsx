@@ -7,6 +7,8 @@ import { toast } from "sonner";
 
 import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { EvidenceUploader } from "@/components/EvidenceUploader";
 import { EvidenceViewer } from "@/components/EvidenceViewer";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -356,6 +358,58 @@ function ResidentPage() {
           ))}
         </ul>
       )}
+
+      <h2 className="mt-8 mb-3 text-sm font-semibold">My profile</h2>
+      <ProfileCard
+        propertyName={property?.name ?? "Property"}
+        unitName={apartment?.unit_name ?? "Apartment"}
+      />
     </AppShell>
   );
 }
+
+function ProfileCard({ propertyName, unitName }: { propertyName: string; unitName: string }) {
+  const { profile, user, refetch } = useCurrentProfile();
+  const [fullName, setFullName] = useState(profile?.full_name ?? "");
+  const [phone, setPhone] = useState(profile?.phone ?? "");
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    if (!user) return;
+    setSaving(true);
+    const { error } = await supabase
+      .from("profiles")
+      .update({ full_name: fullName, phone: phone || null })
+      .eq("id", user.id);
+    setSaving(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success("Profile updated.");
+    await refetch();
+  }
+
+  return (
+    <section className="rounded-xl border border-border bg-card p-5">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <Label htmlFor="pfname">Full name</Label>
+          <Input id="pfname" value={fullName} onChange={(e) => setFullName(e.target.value)} />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="pfphone">Phone</Label>
+          <Input id="pfphone" value={phone} onChange={(e) => setPhone(e.target.value)} />
+        </div>
+      </div>
+      <p className="mt-3 text-xs text-muted-foreground">
+        {profile?.email ?? user?.email} · {propertyName} · {unitName}
+      </p>
+      <Button className="mt-4" size="sm" disabled={saving || fullName.trim().length < 2} onClick={() => void save()}>
+        {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+        Save profile
+      </Button>
+    </section>
+  );
+}
+
