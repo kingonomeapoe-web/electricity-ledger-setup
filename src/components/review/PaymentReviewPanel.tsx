@@ -392,14 +392,36 @@ export function PaymentReviewPanel({
   );
 }
 
-function Field({ label, value }: { label: string; value: React.ReactNode }) {
+function Field({
+  label,
+  value,
+  confidence,
+}: {
+  label: string;
+  value: React.ReactNode;
+  confidence?: number | null | undefined;
+}) {
   return (
     <div className="flex justify-between gap-3 border-b border-border/60 py-1.5 text-sm last:border-0">
       <span className="text-muted-foreground">{label}</span>
-      <span className="text-right font-medium">{value ?? "—"}</span>
+      <span className="flex items-center gap-2 text-right font-medium">
+        <span>{value ?? "—"}</span>
+        {confidence !== null && confidence !== undefined ? (
+          <span
+            className={
+              confidence >= 80
+                ? "text-xs tabular-nums text-muted-foreground"
+                : "text-xs tabular-nums text-chart-5"
+            }
+          >
+            {confidence}%
+          </span>
+        ) : null}
+      </span>
     </div>
   );
 }
+
 
 function SubmissionDetail({
   submission,
