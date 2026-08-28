@@ -82,7 +82,8 @@ type Submission = {
 };
 
 const SELECT =
-  "id, status, submitted_at, rejection_reason, resident_id, apartment_id, evidence_id, apartments(unit_name), profiles(full_name), evidence_files(storage_path, original_filename, mime_type, sha256_hash, captured_at), ocr_extractions(id, status, amount, amount_paid, units_kwh, meter_number, beneficiary_id, token_last4, token_ciphertext, transaction_reference, transaction_number, customer_name, service_address, transaction_date, transaction_time, tariff_class, tariff_rate, provider, confidence, session_id, structured_data)";
+  "id, status, submitted_at, rejection_reason, resident_id, apartment_id, evidence_id, apartments(unit_name), profiles(full_name), evidence_files(storage_path, original_filename, mime_type, sha256_hash, captured_at), ocr_extractions(id, status, amount, amount_paid, units_kwh, meter_number, beneficiary_id, token_last4, token_ciphertext, transaction_reference, transaction_number, customer_name, service_address, transaction_date, transaction_time, tariff_class, tariff_rate, provider, confidence, session_id, error_message, field_confidence, structured_data)";
+
 
 function useDuplicates(submissions: Submission[]) {
   return useMemo(() => {
