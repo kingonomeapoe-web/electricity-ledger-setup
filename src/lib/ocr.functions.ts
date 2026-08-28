@@ -203,6 +203,63 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
           },
     );
 
+    if (fullToken && (fieldConfidence["token"] ?? 100) < 80) {
+      checks.push({
+        key: "token_confidence",
+        label: "Token confidence",
+        level: "warn",
+        detail: `Token could not be confidently read (${fieldConfidence["token"]}%). Verify it against the original receipt before loading.`,
+      });
+    }
+    if (units !== null && (fieldConfidence["units_kwh"] ?? 100) < 80) {
+      checks.push({
+        key: "units_confidence",
+        label: "Units confidence",
+        level: "warn",
+        detail: `Units could not be confidently read (${fieldConfidence["units_kwh"]}%).`,
+      });
+    }
+
+    checks.push(
+      reference
+        ? {
+            key: "reference",
+            label: "Transaction reference",
+            level: "pass",
+            detail: `Reference ${reference} read from the receipt.`,
+          }
+        : {
+            key: "reference",
+            label: "Transaction reference",
+            level: "warn",
+            detail: "No transaction reference could be read.",
+          },
+    );
+
+    const { data: residentAccount } = await supabaseAdmin
+      .from("resident_accounts")
+      .select("id")
+      .eq("resident_id", submission.resident_id)
+      .eq("property_id", submission.property_id)
+      .eq("active", true)
+      .maybeSingle();
+
+    checks.push(
+      residentAccount
+        ? {
+            key: "resident_property",
+            label: "Resident / property",
+            level: "pass",
+            detail: "Submission belongs to the resident's assigned property.",
+          }
+        : {
+            key: "resident_property",
+            label: "Resident / property",
+            level: "fail",
+            detail: "This resident has no active account on the property of this submission.",
+          },
+    );
+
     checks.push(
       confidence !== null && confidence >= 80
         ? { key: "confidence", label: "OCR confidence", level: "pass", detail: `${confidence}%` }
@@ -213,6 +270,7 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
             detail: `${confidence ?? "unknown"}% — read the original receipt carefully.`,
           },
     );
+
 
     // Duplicate detection across this property.
     const { data: siblings } = await supabaseAdmin
