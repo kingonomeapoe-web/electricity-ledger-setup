@@ -612,7 +612,6 @@ function CreditFlow({
   const [notes, setNotes] = useState("");
   const [token, setToken] = useState<string | null>(null);
   const [revealing, setRevealing] = useState(false);
-  const [acknowledgeMismatch, setAcknowledgeMismatch] = useState(false);
   const reveal = useServerFn(revealPaymentToken);
 
   const meterQuery = useQuery({
@@ -775,7 +774,7 @@ function CreditFlow({
             }
             onConfirm={async (reading) => {
               const drift = Math.abs(reading.readingKwh - expected);
-              if (drift > 0.5 && !acknowledgeMismatch && !notes.trim()) {
+              if (drift > 0.5 && !notes.trim()) {
                 throw new Error(
                   `Post-load reading ${reading.readingKwh} kWh differs from the expected ${expected} kWh by ${drift.toFixed(3)} kWh. Add an explanation in the notes, or re-photograph the meter.`,
                 );
