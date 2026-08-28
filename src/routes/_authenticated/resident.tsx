@@ -7,6 +7,8 @@ import { toast } from "sonner";
 
 import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { EvidenceUploader } from "@/components/EvidenceUploader";
 import { EvidenceViewer } from "@/components/EvidenceViewer";
 import { StatusBadge } from "@/components/StatusBadge";
