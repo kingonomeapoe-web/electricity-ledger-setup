@@ -48,8 +48,11 @@ type Extraction = {
   provider: string | null;
   confidence: number | null;
   session_id: string | null;
+  error_message: string | null;
+  field_confidence: Record<string, number> | null;
   structured_data: Record<string, unknown> | null;
 };
+
 
 type ValidationCheck = { key: string; label: string; level: "pass" | "warn" | "fail"; detail: string };
 
