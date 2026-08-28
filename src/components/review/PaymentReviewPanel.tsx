@@ -581,8 +581,14 @@ function SubmissionDetail({
                     )}
                   </span>
                 }
+                confidence={e.field_confidence?.["token"] ?? null}
               />
-              <Field label="Transaction reference" value={e.transaction_reference} />
+              <Field
+                label="Transaction reference"
+                value={e.transaction_reference}
+                confidence={e.field_confidence?.["transaction_reference"] ?? null}
+              />
+
               <Field label="Session ID" value={e.session_id} />
               <Field label="Transaction number" value={e.transaction_number} />
               <Field label="Customer name" value={e.customer_name} />
