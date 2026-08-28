@@ -369,7 +369,8 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
         tariff_class: str(result.data["tariff_class"]),
         tariff_rate: num(result.data["tariff_rate"]),
         confidence,
-        field_confidence: {} as never,
+        field_confidence: fieldConfidence as never,
+
         processed_at: new Date().toISOString(),
       })
       .select("id")
