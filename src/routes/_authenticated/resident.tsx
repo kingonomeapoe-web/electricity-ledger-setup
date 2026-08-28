@@ -193,15 +193,27 @@ function ResidentPage() {
     );
   }
 
-  if (!account) {
+  if (accountQuery.isError || ledgerQuery.isError) {
     return (
       <AppShell title="My electricity">
-        <p className="text-sm text-muted-foreground">
-          You are not linked to an apartment yet. Ask your building administrator to add you.
+        <p className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
+          Unable to load electricity account.
         </p>
       </AppShell>
     );
   }
+
+  if (!account) {
+    return (
+      <AppShell title="My electricity">
+        <p className="text-sm text-muted-foreground">
+          Your property has not been configured yet — ask your building administrator to link you to
+          an apartment.
+        </p>
+      </AppShell>
+    );
+  }
+
 
   const apartment = (account as unknown as { apartments: { unit_name: string } | null }).apartments;
   const property = (account as unknown as { properties: { name: string } | null }).properties;
