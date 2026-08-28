@@ -19,6 +19,8 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentProfile } from "@/hooks/useAuth";
 import { createProperty, linkResident } from "@/lib/admin.functions";
+import { formatKwh, formatDateTime } from "@/lib/audit";
+
 
 export const Route = createFileRoute("/_authenticated/setup")({
   head: () => ({
