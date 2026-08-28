@@ -14,9 +14,9 @@ import {
 type Props = {
   propertyId: string;
   evidenceType: EvidenceType;
-  label?: string;
-  hint?: string;
-  disabled?: boolean;
+  label?: string | undefined;
+  hint?: string | undefined;
+  disabled?: boolean | undefined;
   onUploaded: (evidence: EvidenceFile, file: File) => void | Promise<void>;
 };
 
