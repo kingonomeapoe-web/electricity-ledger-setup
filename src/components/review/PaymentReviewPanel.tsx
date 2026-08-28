@@ -216,9 +216,19 @@ export function PaymentReviewPanel({
     return <p className="text-sm text-muted-foreground">No payment receipts submitted yet.</p>;
   }
 
+  const pendingCount = submissions.filter((s) =>
+    ["uploaded", "ocr_processed", "pending_approval"].includes(s.status),
+  ).length;
+
   return (
     <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <h3 className="text-sm font-semibold">Pending payments</h3>
+        <Badge variant={pendingCount ? "default" : "outline"}>{pendingCount}</Badge>
+        <span className="text-xs text-muted-foreground">awaiting administrative review</span>
+      </div>
       {/* Desktop data table */}
+
       <div className="hidden overflow-x-auto rounded-xl border border-border md:block">
         <Table>
           <TableHeader>
