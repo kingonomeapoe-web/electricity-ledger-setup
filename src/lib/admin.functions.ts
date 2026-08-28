@@ -98,7 +98,7 @@ export const linkResident = createServerFn({ method: "POST" })
         apartment_id: data.apartmentId,
         active: true,
       },
-      { onConflict: "property_id,user_id,role" },
+      { onConflict: "property_id,user_id" },
     );
     if (memberError) throw new Error(memberError.message);
 
@@ -111,7 +111,7 @@ export const linkResident = createServerFn({ method: "POST" })
           apartment_id: data.apartmentId,
           active: true,
         },
-        { onConflict: "apartment_id,resident_id" },
+        { onConflict: "resident_id" },
       )
       .select("id")
       .single();
