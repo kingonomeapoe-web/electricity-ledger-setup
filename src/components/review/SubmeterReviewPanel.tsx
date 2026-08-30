@@ -7,6 +7,13 @@ import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/StatusBadge";
 import { EvidenceViewer } from "@/components/EvidenceViewer";
 import { supabase } from "@/integrations/supabase/client";
+
+type UntypedRpcClient = {
+  rpc: (
+    fn: string,
+    args?: unknown,
+  ) => Promise<{ data: unknown; error: { message: string } | null }>;
+};
 import { formatDateTime, formatKwh, logAudit } from "@/lib/audit";
 
 type Reading = {
@@ -89,15 +96,9 @@ export function SubmeterReviewPanel({
     setBusy(reading.id);
     try {
       const now = new Date().toISOString();
-      const { error } = await supabase
-        .from("submeter_readings")
-        .update({ confirmed_at: now, confirmed_by: userId, confirmed_value_kwh: reading.reading_kwh })
-        .eq("id", reading.id);
-      if (error) throw new Error(error.message);
-
-      const { data: txId, error: rpcError } = await supabase.rpc(
-        "post_confirmed_submeter_consumption",
-        { p_submeter_reading_id: reading.id },
+      const { data: txId, error: rpcError } = await (supabase as unknown as UntypedRpcClient).rpc(
+        "confirm_and_post_submeter_consumption",
+        { p_submeter_reading_id: reading.id } as never,
       );
       if (rpcError) throw new Error(rpcError.message);
 
@@ -159,7 +160,8 @@ export function SubmeterReviewPanel({
                   {apartment?.unit_name ?? "Apartment"} · {resident ?? "Unassigned"}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  Submeter {r.submeters?.identifier ?? "—"} · captured {formatDateTime(r.captured_at)}
+                  Submeter {r.submeters?.identifier ?? "—"} · captured{" "}
+                  {formatDateTime(r.captured_at)}
                 </p>
               </div>
               <StatusBadge state={r.confirmed_at ? "confirmed" : "needs_review"} />
@@ -193,7 +195,13 @@ export function SubmeterReviewPanel({
                   <Button
                     size="sm"
                     variant="ghost"
-                    onClick={() => void annotate(r, "SUBMETER_READING_REJECTED", "Reason for rejecting this reading?")}
+                    onClick={() =>
+                      void annotate(
+                        r,
+                        "SUBMETER_READING_REJECTED",
+                        "Reason for rejecting this reading?",
+                      )
+                    }
                   >
                     Reject
                   </Button>
@@ -201,7 +209,11 @@ export function SubmeterReviewPanel({
                     size="sm"
                     variant="ghost"
                     onClick={() =>
-                      void annotate(r, "SUBMETER_REREAD_REQUESTED", "What should be re-photographed?")
+                      void annotate(
+                        r,
+                        "SUBMETER_REREAD_REQUESTED",
+                        "What should be re-photographed?",
+                      )
                     }
                   >
                     Request another reading

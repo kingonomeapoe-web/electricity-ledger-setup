@@ -13,6 +13,8 @@ export const revealPaymentToken = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => revealInput.parse(input))
   .handler(async ({ data, context }) => {
+    const { decryptToken } = await import("./token.server");
+
     const { data: extraction, error } = await context.supabase
       .from("ocr_extractions")
       .select(
@@ -43,7 +45,7 @@ export const revealPaymentToken = createServerFn({ method: "POST" })
     });
 
     return {
-      token: extraction.token_ciphertext,
+      token: decryptToken(extraction.token_ciphertext),
       tokenLast4: extraction.token_last4,
     };
   });

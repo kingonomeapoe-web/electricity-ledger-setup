@@ -16,15 +16,29 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { StatusBadge } from "@/components/StatusBadge";
 import { EvidenceUploader } from "@/components/EvidenceUploader";
 import { EvidencePreview } from "@/components/review/EvidencePreview";
 import { ReadingCapture } from "@/components/admin/ReadingCapture";
 import { supabase } from "@/integrations/supabase/client";
+
+type UntypedRpcClient = {
+  rpc: (
+    fn: string,
+    args?: unknown,
+  ) => Promise<{ data: unknown; error: { message: string } | null }>;
+};
 import { runEvidenceOcr } from "@/lib/ocr.functions";
 import { revealPaymentToken } from "@/lib/review.functions";
-import { formatDateTime, logAudit, maskToken } from "@/lib/audit";
+import { formatDateTime, maskToken } from "@/lib/audit";
 import { groupToken } from "@/lib/token";
 
 type Extraction = {
@@ -36,7 +50,6 @@ type Extraction = {
   meter_number: string | null;
   beneficiary_id: string | null;
   token_last4: string | null;
-  token_ciphertext: string | null;
   transaction_reference: string | null;
   transaction_number: string | null;
   customer_name: string | null;
@@ -53,8 +66,12 @@ type Extraction = {
   structured_data: Record<string, unknown> | null;
 };
 
-
-type ValidationCheck = { key: string; label: string; level: "pass" | "warn" | "fail"; detail: string };
+type ValidationCheck = {
+  key: string;
+  label: string;
+  level: "pass" | "warn" | "fail";
+  detail: string;
+};
 
 function validationOf(e: Extraction | undefined): ValidationCheck[] {
   const raw = e?.structured_data?.["validation"];
@@ -82,8 +99,7 @@ type Submission = {
 };
 
 const SELECT =
-  "id, status, submitted_at, rejection_reason, resident_id, apartment_id, evidence_id, apartments(unit_name), profiles(full_name), evidence_files(storage_path, original_filename, mime_type, sha256_hash, captured_at), ocr_extractions(id, status, amount, amount_paid, units_kwh, meter_number, beneficiary_id, token_last4, token_ciphertext, transaction_reference, transaction_number, customer_name, service_address, transaction_date, transaction_time, tariff_class, tariff_rate, provider, confidence, session_id, error_message, field_confidence, structured_data)";
-
+  "id, status, submitted_at, rejection_reason, resident_id, apartment_id, evidence_id, apartments(unit_name), profiles(full_name), evidence_files(storage_path, original_filename, mime_type, sha256_hash, captured_at), ocr_extractions(id, status, amount, amount_paid, units_kwh, meter_number, beneficiary_id, token_last4, token_fingerprint, transaction_reference, transaction_number, customer_name, service_address, transaction_date, transaction_time, tariff_class, tariff_rate, provider, confidence, session_id, error_message, field_confidence, structured_data)";
 
 function useDuplicates(submissions: Submission[]) {
   return useMemo(() => {
@@ -95,7 +111,8 @@ function useDuplicates(submissions: Submission[]) {
       const e = s.ocr_extractions?.[0];
       const ref = e?.transaction_reference ?? e?.transaction_number;
       if (ref) refCount.set(ref, (refCount.get(ref) ?? 0) + 1);
-      const fp = (e?.structured_data?.["token_fingerprint"] as string | undefined) ?? e?.token_last4;
+      const fp =
+        (e?.structured_data?.["token_fingerprint"] as string | undefined) ?? e?.token_last4;
       if (fp) tokenCount.set(fp, (tokenCount.get(fp) ?? 0) + 1);
       const hash = s.evidence_files?.sha256_hash;
       if (hash) hashCount.set(hash, (hashCount.get(hash) ?? 0) + 1);
@@ -106,7 +123,8 @@ function useDuplicates(submissions: Submission[]) {
       const ref = e?.transaction_reference ?? e?.transaction_number;
       const flags: string[] = [];
       if (ref && (refCount.get(ref) ?? 0) > 1) flags.push("Duplicate reference");
-      const fp = (e?.structured_data?.["token_fingerprint"] as string | undefined) ?? e?.token_last4;
+      const fp =
+        (e?.structured_data?.["token_fingerprint"] as string | undefined) ?? e?.token_last4;
       if (fp && (tokenCount.get(fp) ?? 0) > 1) flags.push("Duplicate token");
       const hash = s.evidence_files?.sha256_hash;
       if (hash && (hashCount.get(hash) ?? 0) > 1) flags.push("Duplicate evidence hash");
@@ -115,13 +133,7 @@ function useDuplicates(submissions: Submission[]) {
   }, [submissions]);
 }
 
-export function PaymentReviewPanel({
-  propertyId,
-  userId,
-}: {
-  propertyId: string;
-  userId: string;
-}) {
+export function PaymentReviewPanel({ propertyId, userId }: { propertyId: string; userId: string }) {
   const queryClient = useQueryClient();
   const ocr = useServerFn(runEvidenceOcr);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -162,14 +174,6 @@ export function PaymentReviewPanel({
           paymentSubmissionId: submission.id,
         },
       });
-      await logAudit({
-        propertyId,
-        eventType: "OCR_COMPLETED",
-        entityType: "payment_submission",
-        entityId: submission.id,
-        oldData: { status: submission.status },
-        newData: { status: "ocr_processed" },
-      });
       toast.success("OCR complete — review the extracted values.");
       await refresh();
     } catch (error) {
@@ -185,27 +189,18 @@ export function PaymentReviewPanel({
     eventType: string,
     extra?: Record<string, unknown>,
   ) {
-    const { error } = await supabase
-      .from("payment_submissions")
-      .update({
-        status: status as never,
-        reviewed_at: new Date().toISOString(),
-        reviewed_by: userId,
-        ...(extra ?? {}),
-      })
-      .eq("id", submission.id);
+    const { error } = await (supabase as unknown as UntypedRpcClient).rpc(
+      "admin_transition_payment_status",
+      {
+        p_payment_submission_id: submission.id,
+        p_new_status: status as never,
+        ...(extra?.["rejection_reason"] ? { p_reason: String(extra["rejection_reason"]) } : {}),
+      } as never,
+    );
     if (error) {
       toast.error(error.message);
       return;
     }
-    await logAudit({
-      propertyId,
-      eventType,
-      entityType: "payment_submission",
-      entityId: submission.id,
-      oldData: { status: submission.status },
-      newData: { status, ...(extra ?? {}) },
-    });
     await refresh();
   }
 
@@ -253,7 +248,9 @@ export function PaymentReviewPanel({
               const flags = duplicateFlags(s);
               return (
                 <TableRow key={s.id} className={flags.length ? "bg-destructive/5" : undefined}>
-                  <TableCell className="font-medium">{s.profiles?.full_name ?? "Resident"}</TableCell>
+                  <TableCell className="font-medium">
+                    {s.profiles?.full_name ?? "Resident"}
+                  </TableCell>
                   <TableCell>{s.apartments?.unit_name ?? "—"}</TableCell>
                   <TableCell className="text-right tabular-nums">
                     {e?.amount ?? e?.amount_paid ?? "—"}
@@ -269,13 +266,19 @@ export function PaymentReviewPanel({
                   <TableCell className="text-xs">{e?.transaction_date ?? "—"}</TableCell>
                   <TableCell className="text-xs">{formatDateTime(s.submitted_at)}</TableCell>
                   <TableCell className="text-right text-xs tabular-nums">
-                    {e?.confidence !== null && e?.confidence !== undefined ? `${e.confidence}%` : "—"}
+                    {e?.confidence !== null && e?.confidence !== undefined
+                      ? `${e.confidence}%`
+                      : "—"}
                   </TableCell>
                   <TableCell>
                     <div className="flex flex-col items-start gap-1">
                       <StatusBadge state={s.status} />
                       {flags.map((f) => (
-                        <Badge key={f} variant="outline" className="border-destructive/40 text-destructive">
+                        <Badge
+                          key={f}
+                          variant="outline"
+                          className="border-destructive/40 text-destructive"
+                        >
                           {f}
                         </Badge>
                       ))}
@@ -313,13 +316,20 @@ export function PaymentReviewPanel({
                 <span>Amount: {e?.amount ?? "—"}</span>
                 <span>Units: {e?.units_kwh ?? "—"}</span>
                 <span>Meter: {e?.meter_number ?? "—"}</span>
-                <span>OCR: {e?.confidence !== null && e?.confidence !== undefined ? `${e.confidence}%` : "—"}</span>
+                <span>
+                  OCR:{" "}
+                  {e?.confidence !== null && e?.confidence !== undefined ? `${e.confidence}%` : "—"}
+                </span>
                 <span className="col-span-2">Token: {maskToken(e?.token_last4)}</span>
               </div>
               {flags.length ? (
                 <div className="mt-2 flex flex-wrap gap-1">
                   {flags.map((f) => (
-                    <Badge key={f} variant="outline" className="border-destructive/40 text-destructive">
+                    <Badge
+                      key={f}
+                      variant="outline"
+                      className="border-destructive/40 text-destructive"
+                    >
                       {f}
                     </Badge>
                   ))}
@@ -378,7 +388,6 @@ export function PaymentReviewPanel({
           {creditFor ? (
             <CreditFlow
               propertyId={propertyId}
-              userId={userId}
               submission={creditFor}
               onDone={async () => {
                 setCreditFor(null);
@@ -421,7 +430,6 @@ function Field({
     </div>
   );
 }
-
 
 function SubmissionDetail({
   submission,
@@ -601,11 +609,14 @@ function SubmissionDetail({
                 label="OCR confidence"
                 value={e.confidence !== null ? `${e.confidence}%` : "—"}
               />
-              <Field label="Evidence hash" value={
-                <span className="font-mono text-[10px] break-all">
-                  {submission.evidence_files?.sha256_hash ?? "—"}
-                </span>
-              } />
+              <Field
+                label="Evidence hash"
+                value={
+                  <span className="font-mono text-[10px] break-all">
+                    {submission.evidence_files?.sha256_hash ?? "—"}
+                  </span>
+                }
+              />
             </div>
           ) : (
             <div className="space-y-3">
@@ -658,12 +669,10 @@ function SubmissionDetail({
 
 function CreditFlow({
   propertyId,
-  userId,
   submission,
   onDone,
 }: {
   propertyId: string;
-  userId: string;
   submission: Submission;
   onDone: () => Promise<void>;
 }) {
@@ -712,7 +721,6 @@ function CreditFlow({
       </p>
     );
   }
-  const meterId = meterQuery.data.id;
 
   return (
     <div className="space-y-4">
@@ -811,8 +819,8 @@ function CreditFlow({
               Expected balance after loading: {expected.toFixed(3)} kWh
             </span>
             <span>
-              The photographed post-load reading must match this figure within 0.5 kWh, otherwise the
-              variance must be explained before the resident is credited.
+              The photographed post-load reading must match this figure within 0.5 kWh, otherwise
+              the variance must be explained before the resident is credited.
             </span>
           </div>
           <ReadingCapture
@@ -845,56 +853,19 @@ function CreditFlow({
                   `Post-load reading ${reading.readingKwh} kWh differs from the expected ${expected} kWh by ${drift.toFixed(3)} kWh. Add an explanation in the notes, or re-photograph the meter.`,
                 );
               }
-              const now = new Date().toISOString();
-              const { data: inserted, error } = await supabase
-                .from("central_meter_readings")
-                .insert({
-                  meter_id: meterId,
-                  reading_kwh: reading.readingKwh,
-                  reading_kind: "post_load",
-                  source: reading.source,
-                  evidence_id: reading.evidenceId,
-                  ocr_value_kwh: reading.ocrValueKwh,
-                  ocr_confidence: reading.ocrConfidence,
-                  confirmed_value_kwh: reading.readingKwh,
-                  captured_at: now,
-                  confirmed_at: now,
-                  captured_by: userId,
-                  confirmed_by: userId,
-                  notes: notes || null,
-                })
-                .select("id")
-                .single();
-              if (error) throw new Error(error.message);
-
-              const { data: txId, error: rpcError } = await supabase.rpc(
-                "confirm_central_meter_credit",
-                {
-                  p_payment_submission_id: submission.id,
-                  p_units_loaded_kwh: units,
-                  p_central_balance_before_kwh: before,
-                  p_central_balance_after_kwh: reading.readingKwh,
-                  p_reading_evidence_id: reading.evidenceId,
-                  p_load_evidence_id: loadEvidenceId!,
-                  ...(notes ? { p_notes: notes } : {}),
-                },
-              );
+              const { error: rpcError } = await supabase.rpc("confirm_central_meter_credit", {
+                p_payment_submission_id: submission.id,
+                p_units_loaded_kwh: units,
+                p_central_balance_before_kwh: before,
+                p_central_balance_after_kwh: reading.readingKwh,
+                p_reading_evidence_id: reading.evidenceId,
+                p_load_evidence_id: loadEvidenceId!,
+                p_reading_source: reading.source,
+                p_ocr_value_kwh: reading.ocrValueKwh,
+                p_ocr_confidence: reading.ocrConfidence,
+                ...(notes ? { p_notes: notes } : {}),
+              } as never);
               if (rpcError) throw new Error(rpcError.message);
-
-              await logAudit({
-                propertyId,
-                eventType: "CENTRAL_LOAD_CONFIRMED",
-                entityType: "payment_submission",
-                entityId: submission.id,
-                oldData: { status: submission.status },
-                newData: { status: "credited", units_loaded_kwh: units },
-                metadata: {
-                  ledger_transaction_id: txId,
-                  central_meter_reading_id: inserted.id,
-                  balance_before_kwh: before,
-                  balance_after_kwh: reading.readingKwh,
-                },
-              });
 
               toast.success("Resident credited from the confirmed central meter load.");
               await onDone();
