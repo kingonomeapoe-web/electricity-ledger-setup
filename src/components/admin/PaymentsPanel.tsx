@@ -1,30 +1,26 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { Loader2, ScanLine, Fuel } from "lucide-react";
+import { Loader2, ScanLine } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { EvidenceUploader } from "@/components/EvidenceUploader";
 import { EvidenceViewer } from "@/components/EvidenceViewer";
 import { StatusBadge } from "@/components/StatusBadge";
-import { ReadingCapture } from "@/components/admin/ReadingCapture";
 import { supabase } from "@/integrations/supabase/client";
+
+type UntypedRpcClient = {
+  rpc: (
+    fn: string,
+    args?: unknown,
+  ) => Promise<{ data: unknown; error: { message: string } | null }>;
+};
 import { runEvidenceOcr } from "@/lib/ocr.functions";
 
 type Submission = {
   id: string;
   status: string;
   submitted_at: string;
-  apartment_id: string;
   evidence_id: string;
   apartments: { unit_name: string } | null;
   profiles: { full_name: string } | null;
@@ -44,11 +40,10 @@ type Submission = {
   }>;
 };
 
-export function PaymentsPanel({ propertyId, userId }: { propertyId: string; userId: string }) {
+export function PaymentsPanel({ propertyId }: { propertyId: string; userId: string }) {
   const queryClient = useQueryClient();
   const ocr = useServerFn(runEvidenceOcr);
   const [processing, setProcessing] = useState<string | null>(null);
-  const [loadFor, setLoadFor] = useState<Submission | null>(null);
 
   const submissionsQuery = useQuery({
     queryKey: ["admin-submissions", propertyId],
@@ -56,27 +51,12 @@ export function PaymentsPanel({ propertyId, userId }: { propertyId: string; user
       const { data, error } = await supabase
         .from("payment_submissions")
         .select(
-          "id, status, submitted_at, apartment_id, evidence_id, apartments(unit_name), profiles(full_name), evidence_files(storage_path, original_filename, mime_type), ocr_extractions(id, status, amount, units_kwh, token_last4, meter_number, confidence)",
+          "id, status, submitted_at, evidence_id, apartments(unit_name), profiles(full_name), evidence_files(storage_path, original_filename, mime_type), ocr_extractions(id, status, amount, units_kwh, token_last4, meter_number, confidence)",
         )
         .eq("property_id", propertyId)
         .order("submitted_at", { ascending: false });
       if (error) throw error;
       return data as unknown as Submission[];
-    },
-  });
-
-  const meterQuery = useQuery({
-    queryKey: ["main-meter", propertyId],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("meters")
-        .select("id, identifier")
-        .eq("property_id", propertyId)
-        .eq("meter_type", "prepaid_main")
-        .eq("active", true)
-        .maybeSingle();
-      if (error) throw error;
-      return data;
     },
   });
 
@@ -90,7 +70,7 @@ export function PaymentsPanel({ propertyId, userId }: { propertyId: string; user
           paymentSubmissionId: submission.id,
         },
       });
-      toast.success("OCR complete — review the extracted values.");
+      toast.success("OCR complete — review the extracted values in Review & reconciliation.");
       await queryClient.invalidateQueries({ queryKey: ["admin-submissions"] });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "OCR failed");
@@ -102,15 +82,14 @@ export function PaymentsPanel({ propertyId, userId }: { propertyId: string; user
   async function reject(submission: Submission) {
     const reason = window.prompt("Reason for rejecting this receipt?");
     if (!reason) return;
-    const { error } = await supabase
-      .from("payment_submissions")
-      .update({
-        status: "rejected",
-        rejection_reason: reason,
-        reviewed_at: new Date().toISOString(),
-        reviewed_by: userId,
-      })
-      .eq("id", submission.id);
+    const { error } = await (supabase as unknown as UntypedRpcClient).rpc(
+      "admin_transition_payment_status",
+      {
+        p_payment_submission_id: submission.id,
+        p_new_status: "rejected" as never,
+        p_reason: reason,
+      } as never,
+    );
     if (error) {
       toast.error(error.message);
       return;
@@ -126,6 +105,10 @@ export function PaymentsPanel({ propertyId, userId }: { propertyId: string; user
 
   return (
     <div className="space-y-3">
+      <p className="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
+        Payment loading and resident crediting now use one authoritative workflow in Review &
+        reconciliation. This panel is limited to receipt viewing, OCR, and rejection.
+      </p>
       {submissions.length === 0 ? (
         <p className="text-sm text-muted-foreground">No payment receipts submitted yet.</p>
       ) : null}
@@ -171,7 +154,12 @@ export function PaymentsPanel({ propertyId, userId }: { propertyId: string; user
               ) : null}
 
               {!extraction ? (
-                <Button size="sm" variant="secondary" disabled={processing === submission.id} onClick={() => void runOcr(submission)}>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={processing === submission.id}
+                  onClick={() => void runOcr(submission)}
+                >
                   {processing === submission.id ? (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   ) : (
@@ -182,128 +170,14 @@ export function PaymentsPanel({ propertyId, userId }: { propertyId: string; user
               ) : null}
 
               {submission.status !== "rejected" && submission.status !== "credited" ? (
-                <>
-                  <Button size="sm" onClick={() => setLoadFor(submission)}>
-                    <Fuel className="mr-2 h-4 w-4" /> Record token load
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => void reject(submission)}>
-                    Reject
-                  </Button>
-                </>
+                <Button size="sm" variant="ghost" onClick={() => void reject(submission)}>
+                  Reject
+                </Button>
               ) : null}
             </div>
           </div>
         );
       })}
-
-      <Dialog open={!!loadFor} onOpenChange={(open) => !open && setLoadFor(null)}>
-        <DialogContent className="max-h-[85vh] max-w-lg overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Record central meter token load</DialogTitle>
-            <DialogDescription>
-              Load the token onto the central prepaid meter, then upload the load evidence and a photo
-              of the meter display. Nothing is credited until the reading is confirmed.
-            </DialogDescription>
-          </DialogHeader>
-
-          {loadFor ? (
-            <TokenLoadFlow
-              propertyId={propertyId}
-              userId={userId}
-              meterId={meterQuery.data?.id ?? null}
-              submissionId={loadFor.id}
-              onDone={async () => {
-                setLoadFor(null);
-                await queryClient.invalidateQueries({ queryKey: ["admin-submissions"] });
-              }}
-            />
-          ) : null}
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
-
-function TokenLoadFlow({
-  propertyId,
-  userId,
-  meterId,
-  submissionId,
-  onDone,
-}: {
-  propertyId: string;
-  userId: string;
-  meterId: string | null;
-  submissionId: string;
-  onDone: () => Promise<void>;
-}) {
-  const [loadEvidenceId, setLoadEvidenceId] = useState<string | null>(null);
-  const [tokenLast4, setTokenLast4] = useState("");
-
-  if (!meterId) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        Add an active main prepaid meter in Property setup before recording token loads.
-      </p>
-    );
-  }
-
-  return (
-    <div className="space-y-4">
-      <EvidenceUploader
-        propertyId={propertyId}
-        evidenceType="central_meter_load"
-        label="Token load evidence"
-        hint="Screenshot or photo showing the token being loaded onto the central meter."
-        onUploaded={(evidence) => setLoadEvidenceId(evidence.id)}
-      />
-
-      <div className="space-y-1.5">
-        <label className="text-sm font-medium" htmlFor="token4">
-          Token last 4 digits (optional)
-        </label>
-        <Input id="token4" maxLength={4} value={tokenLast4} onChange={(e) => setTokenLast4(e.target.value)} />
-      </div>
-
-      {loadEvidenceId ? (
-        <ReadingCapture
-          propertyId={propertyId}
-          evidenceType="central_meter_reading"
-          label="Central meter display after loading"
-          hint="Photograph the meter so the post-load balance is evidenced."
-          confirmLabel="Confirm post-load reading"
-          onConfirm={async (reading) => {
-            const now = new Date().toISOString();
-            const { error } = await supabase.from("central_meter_readings").insert({
-              meter_id: meterId,
-              reading_kwh: reading.readingKwh,
-              reading_kind: "post_load",
-              source: reading.source,
-              evidence_id: reading.evidenceId,
-              ocr_value_kwh: reading.ocrValueKwh,
-              ocr_confidence: reading.ocrConfidence,
-              confirmed_value_kwh: reading.readingKwh,
-              captured_at: now,
-              confirmed_at: now,
-              captured_by: userId,
-              confirmed_by: userId,
-              notes: tokenLast4 ? `Token ending ${tokenLast4}` : null,
-            });
-            if (error) throw new Error(error.message);
-
-            const { error: updateError } = await supabase
-              .from("payment_submissions")
-              .update({ status: "loaded", reviewed_at: now, reviewed_by: userId })
-              .eq("id", submissionId);
-            if (updateError) throw new Error(updateError.message);
-
-            toast.success("Token load evidenced and post-load reading confirmed.");
-            await onDone();
-          }}
-        />
-      ) : (
-        <p className="text-xs text-muted-foreground">Upload the load evidence first.</p>
-      )}
     </div>
   );
 }

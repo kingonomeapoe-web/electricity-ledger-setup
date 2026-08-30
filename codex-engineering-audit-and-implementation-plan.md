@@ -1,5 +1,25 @@
 # Electricity Ledger Engineering Audit & Implementation Plan
 
+## Phase 1 Remediation Status — 2026-08-30
+
+Implemented in migration `20260830000000_phase1_security_integrity.sql` and matching frontend/server updates:
+
+- C1 token security: OCR now encrypts full tokens server-side using AES-256-GCM and stores deterministic HMAC fingerprints plus last-four digits for duplicate detection. Full tokens are not stored in structured OCR data or audit metadata. Authorized admin reveal decrypts server-side only.
+- C2/C3 evidence isolation/upload authorization: evidence paths now include property, evidence type, owner ID, generated evidence ID, and filename. Storage policies now authorize reads through `evidence_files` ownership/admin metadata and restrict resident writes to their own `payment_receipt` paths.
+- C4/C8 submeter confirmation/consumption: added `confirm_and_post_submeter_consumption()` to atomically authorize, confirm, prevent duplicate posting, debit the resident ledger, and audit. The UI no longer updates immutable submeter readings directly.
+- C5 duplicate central-meter workflows: the legacy admin payment panel no longer records token loads or sets `loaded`; final crediting is consolidated in the review workflow via `confirm_central_meter_credit()`.
+- C6 payment state machine: added `admin_transition_payment_status()` and replaced direct review/admin payment status updates.
+- C7 atomic central-meter credit: `confirm_central_meter_credit()` now validates payment state, evidence, previous balance, duplicate token/reference protections, inserts the central reading, creates the central load, credits the ledger, updates payment status, and audits in one database transaction.
+- C9 controlled adjustments: added `adjustment_requests`, `request_ledger_adjustment()`, and `execute_approved_adjustment()` while preserving the existing UI through a compatibility wrapper that creates and executes an audited adjustment request.
+- C10 audit hashing: added a server-side `hash_audit_event()` trigger that serializes audit inserts and computes `previous_hash` and `event_hash` with SHA-256.
+
+Remaining follow-up work:
+
+- Add a full database integration test harness capable of applying migrations and asserting RLS/RPC behavior against a running local Supabase/Postgres instance.
+- Backfill or rotate any previously stored plaintext token data in existing production rows.
+- Configure `TOKEN_ENCRYPTION_KEY` and `TOKEN_FINGERPRINT_KEY` in production server environments before running OCR token extraction.
+- Consider converting central snapshot confirmation to an append-only pending/confirmed model; Phase 1 fixed the required payment credit and submeter posting paths.
+
 ## A. Architecture Summary
 
 Electricity Ledger is a TanStack Start + React + Supabase application for managing electricity payments, central prepaid-meter loads, apartment submeter readings, resident credit balances, reconciliation, and audit history.

@@ -27,7 +27,8 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => evidenceOcrInput.parse(input))
   .handler(async ({ data, context }) => {
     const { runVisionOcr, toBase64, num, str } = await import("./ocr.server");
-    const { normalizeToken, tokenFingerprint, tokenLast4 } = await import("./token");
+    const { normalizeToken, tokenLast4 } = await import("./token");
+    const { encryptToken, tokenHmacFingerprint } = await import("./token.server");
 
     // RLS scopes this read to evidence the caller is allowed to see.
     const { data: evidence, error } = await context.supabase
@@ -126,14 +127,14 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
 
     const fullToken = normalizeToken(str(result.data["token"]) ?? str(result.data["token_raw"]));
     const last4 = tokenLast4(fullToken) ?? str(result.data["token_last4"]);
-    const fingerprint = await tokenFingerprint(fullToken);
+    const fingerprint = tokenHmacFingerprint(fullToken);
+    const encryptedToken = encryptToken(fullToken);
     const meterNumber = str(result.data["meter_number"]);
     const units = num(result.data["units_kwh"]);
     const amount = num(result.data["amount"]);
     const reference =
       str(result.data["transaction_reference"]) ?? str(result.data["transaction_number"]);
     const confidence = result.confidence;
-
 
     // ---- Automatic validation (advisory; never auto-credits or auto-rejects)
     const checks: ValidationCheck[] = [];
@@ -164,7 +165,9 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
         level: "warn",
         detail: "No main prepaid meter number is configured for this property.",
       });
-    } else if (expectedMeters.some((m) => m === readMeter || m.endsWith(readMeter) || readMeter.endsWith(m))) {
+    } else if (
+      expectedMeters.some((m) => m === readMeter || m.endsWith(readMeter) || readMeter.endsWith(m))
+    ) {
       checks.push({
         key: "meter_match",
         label: "Meter number",
@@ -182,13 +185,23 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
 
     checks.push(
       units !== null && units > 0
-        ? { key: "units", label: "Units", level: "pass", detail: `${units} kWh read from the receipt.` }
+        ? {
+            key: "units",
+            label: "Units",
+            level: "pass",
+            detail: `${units} kWh read from the receipt.`,
+          }
         : { key: "units", label: "Units", level: "warn", detail: "No unit value could be read." },
     );
 
     checks.push(
       amount !== null && amount > 0
-        ? { key: "amount", label: "Amount", level: "pass", detail: `${amount} read from the receipt.` }
+        ? {
+            key: "amount",
+            label: "Amount",
+            level: "pass",
+            detail: `${amount} read from the receipt.`,
+          }
         : { key: "amount", label: "Amount", level: "warn", detail: "No amount could be read." },
     );
 
@@ -271,7 +284,6 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
           },
     );
 
-
     // Duplicate detection across this property.
     const { data: siblings } = await supabaseAdmin
       .from("ocr_extractions")
@@ -342,7 +354,6 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
     delete structured["token"];
     delete structured["token_raw"];
 
-
     const { data: inserted, error: insertError } = await supabaseAdmin
       .from("ocr_extractions")
       .insert({
@@ -358,7 +369,8 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
         units_kwh: units,
         meter_number: meterNumber,
         beneficiary_id: str(result.data["beneficiary_id"]),
-        token_ciphertext: fullToken,
+        token_ciphertext: encryptedToken,
+        token_fingerprint: fingerprint,
         token_last4: last4,
         transaction_reference: str(result.data["transaction_reference"]),
         transaction_number: str(result.data["transaction_number"]),
@@ -372,7 +384,7 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
         field_confidence: fieldConfidence as never,
 
         processed_at: new Date().toISOString(),
-      })
+      } as never)
       .select("id")
       .single();
     if (insertError) throw new Error(insertError.message);
@@ -430,6 +442,5 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
       token_last4: last4,
       checks,
       raw_text: result.raw_text,
-
     };
   });

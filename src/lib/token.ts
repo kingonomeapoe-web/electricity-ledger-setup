@@ -7,7 +7,7 @@
 export function normalizeToken(raw: string | null | undefined): string | null {
   if (!raw) return null;
   const digits = String(raw).replace(/\D/g, "");
-  return digits.length >= 8 ? digits : null;
+  return digits.length === 20 ? digits : null;
 }
 
 /** Deterministic, non-reversible fingerprint used only for duplicate matching. */

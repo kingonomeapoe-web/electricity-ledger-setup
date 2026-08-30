@@ -56,7 +56,8 @@ export async function uploadEvidence(params: {
     params.capturedAt ??
     (file.lastModified ? new Date(file.lastModified).toISOString() : new Date().toISOString());
 
-  const path = `${propertyId}/${evidenceType}/${globalThis.crypto.randomUUID()}-${safeName(file.name || "capture.jpg")}`;
+  const evidenceId = globalThis.crypto.randomUUID();
+  const path = `${propertyId}/${evidenceType}/${userData.user.id}/${evidenceId}/${safeName(file.name || "capture.jpg")}`;
 
   const { error: uploadError } = await supabase.storage.from(EVIDENCE_BUCKET).upload(path, file, {
     upsert: false,
