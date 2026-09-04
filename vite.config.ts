@@ -12,4 +12,11 @@ export default defineConfig({
     // nitro/vite builds from this
     server: { entry: "server" },
   },
+  // This site is hosted on Netlify. Without an explicit preset, the shared
+  // Lovable config falls back to a Cloudflare Workers build outside the
+  // Lovable sandbox, which Netlify can't run — causing every route (including
+  // the homepage) to 404. Target Netlify's function runtime instead.
+  nitro: {
+    preset: "netlify",
+  },
 });
