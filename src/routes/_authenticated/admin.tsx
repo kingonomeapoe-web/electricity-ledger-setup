@@ -82,17 +82,17 @@ function AdminPage() {
       ) : null}
 
       <Tabs defaultValue="overview">
-        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4">
+        <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="payments">Receipts</TabsTrigger>
           <TabsTrigger value="central">Central meter</TabsTrigger>
           <TabsTrigger value="submeters">Submeters</TabsTrigger>
         </TabsList>
         <TabsContent value="overview" className="pt-5">
           <PropertyOverview propertyId={active} />
-        </TabsContent>
-        <TabsContent value="payments" className="pt-5">
-          <PaymentsPanel propertyId={active} userId={user!.id} />
+          <p className="mt-4 text-xs text-muted-foreground">
+            Payment receipts, token loading and resident credits are handled only in Review &amp;
+            reconciliation, so there is a single authoritative crediting route.
+          </p>
         </TabsContent>
         <TabsContent value="central" className="pt-5">
           <CentralMeterPanel propertyId={active} userId={user!.id} />
