@@ -11,7 +11,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { PaymentsPanel } from "@/components/admin/PaymentsPanel";
 import { CentralMeterPanel } from "@/components/admin/CentralMeterPanel";
 import { SubmeterPanel } from "@/components/admin/SubmeterPanel";
 import { PropertyOverview } from "@/components/admin/PropertyOverview";
