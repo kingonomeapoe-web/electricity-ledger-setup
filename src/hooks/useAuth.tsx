@@ -71,6 +71,7 @@ export function useCurrentProfile() {
   return {
     user,
     loading: loading || query.isLoading,
+    profileError: query.error,
     profile: query.data?.profile ?? null,
     memberships,
     adminMemberships,
