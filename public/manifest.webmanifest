@@ -1,0 +1,18 @@
+{
+  "name": "Electricity Ledger",
+  "short_name": "Ledger",
+  "description": "Evidence-backed prepaid electricity metering: receipts, token loads, meter readings and resident balances.",
+  "start_url": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b1120",
+  "theme_color": "#0b1120",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "48x48",
+      "type": "image/x-icon"
+    }
+  ]
+}
