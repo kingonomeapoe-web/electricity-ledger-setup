@@ -9,11 +9,23 @@ export function useSessionUser() {
 
   useEffect(() => {
     let mounted = true;
-    supabase.auth.getUser().then(({ data }) => {
-      if (!mounted) return;
-      setUser(data.user ?? null);
-      setLoading(false);
-    });
+    // The authenticated route has already validated the user with getUser().
+    // Reading the local session here avoids a second network request that can
+    // leave every authenticated page (including Evidence & readings) spinning
+    // while a preview/auth refresh is unavailable.
+    void supabase.auth
+      .getSession()
+      .then(({ data }) => {
+        if (!mounted) return;
+        setUser(data.session?.user ?? null);
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setUser(null);
+      })
+      .finally(() => {
+        if (mounted) setLoading(false);
+      });
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
     });
