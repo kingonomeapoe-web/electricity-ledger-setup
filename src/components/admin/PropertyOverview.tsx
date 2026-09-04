@@ -32,7 +32,7 @@ export function PropertyOverview({ propertyId }: { propertyId: string }) {
         supabase
           .from("apartments")
           .select(
-            "id, unit_name, submeters(id, identifier, active), resident_accounts(id, active, profiles:resident_id(full_name, email))",
+            "id, unit_name, submeters(id, identifier, active), resident_accounts(id, active, profiles!resident_accounts_resident_id_fkey(full_name, email))",
           )
           .eq("property_id", propertyId)
           .eq("active", true)
@@ -155,7 +155,10 @@ export function PropertyOverview({ propertyId }: { propertyId: string }) {
               const submeter = apartment.submeters.find((s) => s.active);
               const residents = apartment.resident_accounts.filter((r) => r.active);
               return (
-                <li key={apartment.id} className="flex flex-col gap-1 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <li
+                  key={apartment.id}
+                  className="flex flex-col gap-1 py-3 sm:flex-row sm:items-center sm:justify-between"
+                >
                   <div>
                     <p className="text-sm font-medium">{apartment.unit_name}</p>
                     <p className="text-xs text-muted-foreground">
