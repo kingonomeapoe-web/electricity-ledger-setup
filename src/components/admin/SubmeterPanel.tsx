@@ -34,9 +34,12 @@ export function SubmeterPanel({ propertyId, userId }: { propertyId: string; user
     },
   });
 
+  type SubmeterRow = { id: string; identifier: string; active: boolean };
+  const toArray = <T,>(value: unknown): T[] =>
+    Array.isArray(value) ? (value as T[]) : value ? [value as T] : [];
+
   const options = (submetersQuery.data ?? []).flatMap((apartment) =>
-    ((apartment as unknown as { submeters: Array<{ id: string; identifier: string; active: boolean }> })
-      .submeters ?? [])
+    toArray<SubmeterRow>((apartment as unknown as { submeters?: unknown }).submeters)
       .filter((s) => s.active)
       .map((s) => ({ id: s.id, label: `${apartment.unit_name} · ${s.identifier}` })),
   );
