@@ -65,8 +65,15 @@ export function PropertyOverview({ propertyId }: { propertyId: string }) {
           id: raw['id'] as string,
           unit_name: raw['unit_name'] as string,
           submeters: toArray<ApartmentRow['submeters'][number]>(raw['submeters']),
-          resident_accounts: toArray<ApartmentRow['resident_accounts'][number]>(
-            raw['resident_accounts'],
+          resident_accounts: toArray<Record<string, unknown>>(raw['resident_accounts']).map(
+            (account) => ({
+              id: account['id'] as string,
+              active: account['active'] as boolean,
+              profiles:
+                toArray<ApartmentRow['resident_accounts'][number]['profiles']>(
+                  account['profiles'],
+                )[0] ?? null,
+            }),
           ),
         };
       });
