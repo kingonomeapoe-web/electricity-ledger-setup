@@ -56,11 +56,33 @@ export function PropertyOverview({ propertyId }: { propertyId: string }) {
         balance = data;
       }
 
+      const toArray = <T,>(value: unknown): T[] =>
+        Array.isArray(value) ? (value as T[]) : value ? [value as T] : [];
+
+      const apartmentRows: ApartmentRow[] = (apartments.data ?? []).map((row) => {
+        const raw = row as unknown as Record<string, unknown>;
+        return {
+          id: raw['id'] as string,
+          unit_name: raw['unit_name'] as string,
+          submeters: toArray<ApartmentRow['submeters'][number]>(raw['submeters']),
+          resident_accounts: toArray<Record<string, unknown>>(raw['resident_accounts']).map(
+            (account) => ({
+              id: account['id'] as string,
+              active: account['active'] as boolean,
+              profiles:
+                toArray<ApartmentRow['resident_accounts'][number]['profiles']>(
+                  account['profiles'],
+                )[0] ?? null,
+            }),
+          ),
+        };
+      });
+
       return {
         property: property.data,
         meter: meter.data,
         balance,
-        apartments: (apartments.data ?? []) as unknown as ApartmentRow[],
+        apartments: apartmentRows,
       };
     },
   });
