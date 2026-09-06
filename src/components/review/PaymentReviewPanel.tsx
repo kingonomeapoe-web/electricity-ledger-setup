@@ -70,7 +70,7 @@ type Submission = {
   apartment_id: string;
   evidence_id: string;
   apartments: { unit_name: string } | null;
-  profiles: { full_name: string } | null;
+  resident_profile: { full_name: string } | null;
   evidence_files: {
     storage_path: string;
     original_filename: string | null;
@@ -82,7 +82,7 @@ type Submission = {
 };
 
 const SELECT =
-  "id, status, submitted_at, rejection_reason, resident_id, apartment_id, evidence_id, apartments(unit_name), profiles(full_name), evidence_files(storage_path, original_filename, mime_type, sha256_hash, captured_at), ocr_extractions(id, status, amount, amount_paid, units_kwh, meter_number, beneficiary_id, token_last4, token_ciphertext, transaction_reference, transaction_number, customer_name, service_address, transaction_date, transaction_time, tariff_class, tariff_rate, provider, confidence, session_id, error_message, field_confidence, structured_data)";
+  "id, status, submitted_at, rejection_reason, resident_id, apartment_id, evidence_id, apartments(unit_name), resident_profile:profiles!payment_submissions_resident_id_fkey(full_name), evidence_files(storage_path, original_filename, mime_type, sha256_hash, captured_at), ocr_extractions(id, status, amount, amount_paid, units_kwh, meter_number, beneficiary_id, token_last4, token_ciphertext, transaction_reference, transaction_number, customer_name, service_address, transaction_date, transaction_time, tariff_class, tariff_rate, provider, confidence, session_id, error_message, field_confidence, structured_data)";
 
 
 function useDuplicates(submissions: Submission[]) {
@@ -212,6 +212,13 @@ export function PaymentReviewPanel({
   if (submissionsQuery.isLoading) {
     return <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />;
   }
+  if (submissionsQuery.isError) {
+    return (
+      <p className="text-sm text-destructive">
+        Payment receipts could not be loaded. Please refresh and try again.
+      </p>
+    );
+  }
   if (submissions.length === 0) {
     return <p className="text-sm text-muted-foreground">No payment receipts submitted yet.</p>;
   }
@@ -253,7 +260,7 @@ export function PaymentReviewPanel({
               const flags = duplicateFlags(s);
               return (
                 <TableRow key={s.id} className={flags.length ? "bg-destructive/5" : undefined}>
-                  <TableCell className="font-medium">{s.profiles?.full_name ?? "Resident"}</TableCell>
+                  <TableCell className="font-medium">{s.resident_profile?.full_name ?? "Resident"}</TableCell>
                   <TableCell>{s.apartments?.unit_name ?? "—"}</TableCell>
                   <TableCell className="text-right tabular-nums">
                     {e?.amount ?? e?.amount_paid ?? "—"}
@@ -303,7 +310,7 @@ export function PaymentReviewPanel({
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <p className="text-sm font-medium">
-                    {s.profiles?.full_name ?? "Resident"} · {s.apartments?.unit_name ?? "—"}
+                    {s.resident_profile?.full_name ?? "Resident"} · {s.apartments?.unit_name ?? "—"}
                   </p>
                   <p className="text-xs text-muted-foreground">{formatDateTime(s.submitted_at)}</p>
                 </div>
@@ -455,7 +462,7 @@ function SubmissionDetail({
     <div className="space-y-4">
       <DialogHeader>
         <DialogTitle>
-          {submission.profiles?.full_name ?? "Resident"} · {submission.apartments?.unit_name ?? "—"}
+          {submission.resident_profile?.full_name ?? "Resident"} · {submission.apartments?.unit_name ?? "—"}
         </DialogTitle>
         <DialogDescription>
           Uploaded {formatDateTime(submission.submitted_at)} · OCR is advisory only and must be
