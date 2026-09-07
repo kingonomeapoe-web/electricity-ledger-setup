@@ -1337,10 +1337,28 @@ export type Database = {
         }
         Returns: string
       }
+      log_ocr_event: {
+        Args: {
+          p_event_type: string
+          p_metadata?: Json
+          p_payment_submission_id: string
+        }
+        Returns: undefined
+      }
+      log_ocr_failure: {
+        Args: {
+          p_error_message: string
+          p_evidence_id: string
+          p_metadata?: Json
+          p_payment_submission_id: string
+        }
+        Returns: undefined
+      }
       post_confirmed_submeter_consumption: {
         Args: { p_submeter_reading_id: string }
         Returns: string
       }
+      process_receipt_ocr: { Args: { p_payload: Json }; Returns: string }
     }
     Enums: {
       app_role: "admin" | "resident"
