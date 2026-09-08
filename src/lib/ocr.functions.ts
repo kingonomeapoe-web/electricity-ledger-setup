@@ -21,6 +21,11 @@ export type ValidationCheck = {
  * nothing is confirmed, credited or posted here. For payment receipts the
  * extraction is persisted, automatically validated and the submission moves to
  * `pending_approval` so an administrator can review it.
+ *
+ * This function intentionally does NOT use the service-role client. All writes
+ * go through SECURITY INVOKER RPCs that run under the authenticated resident's
+ * own RLS policies, so the upload -> OCR -> review flow works on Cloudflare
+ * Workers without exposing the admin key.
  */
 export const runEvidenceOcr = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -73,15 +78,26 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
     if (submissionError) throw new Error(submissionError.message);
     if (!submission) throw new Error("Payment submission not found or not accessible.");
 
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    // Helper for the new SECURITY INVOKER RPCs (not yet in generated types).
+    const rpc = async <T = unknown>(
+      name: string,
+      params: Record<string, unknown>,
+    ): Promise<T | null> => {
+      const sb = context.supabase as unknown as {
+        rpc: (
+          n: string,
+          p: Record<string, unknown>,
+        ) => Promise<{ data: T | null; error: { message: string } | null }>;
+      };
+      const { data: rpcData, error } = await sb.rpc(name, params);
+      if (error) throw new Error(`${name}: ${error.message}`);
+      return rpcData;
+    };
 
-    await supabaseAdmin.from("audit_logs").insert({
-      property_id: submission.property_id,
-      actor_id: context.userId,
-      event_type: "OCR_STARTED",
-      entity_type: "payment_submission",
-      entity_id: submission.id,
-      metadata: { evidence_id: evidence.id, model: "google/gemini-2.5-flash" } as never,
+    await rpc<void>("log_ocr_event", {
+      p_payment_submission_id: submission.id,
+      p_event_type: "OCR_STARTED",
+      p_metadata: { evidence_id: evidence.id, model: "google/gemini-2.5-flash" },
     });
 
     let result;
@@ -93,24 +109,11 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
       });
     } catch (ocrError) {
       const message = ocrError instanceof Error ? ocrError.message : "OCR failed";
-      await supabaseAdmin.from("ocr_extractions").insert({
-        evidence_id: evidence.id,
-        payment_submission_id: submission.id,
-        status: "failed",
-        provider: "lovable-ai",
-        model: "google/gemini-2.5-flash",
-        error_message: message,
-        structured_data: {} as never,
-        field_confidence: {} as never,
-        processed_at: new Date().toISOString(),
-      });
-      await supabaseAdmin.from("audit_logs").insert({
-        property_id: submission.property_id,
-        actor_id: context.userId,
-        event_type: "OCR_FAILED",
-        entity_type: "payment_submission",
-        entity_id: submission.id,
-        metadata: { error: message } as never,
+      await rpc<void>("log_ocr_failure", {
+        p_payment_submission_id: submission.id,
+        p_evidence_id: evidence.id,
+        p_error_message: message,
+        p_metadata: { evidence_id: evidence.id },
       });
       throw new Error(message);
     }
@@ -134,11 +137,10 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
       str(result.data["transaction_reference"]) ?? str(result.data["transaction_number"]);
     const confidence = result.confidence;
 
-
     // ---- Automatic validation (advisory; never auto-credits or auto-rejects)
     const checks: ValidationCheck[] = [];
 
-    const { data: meter } = await supabaseAdmin
+    const { data: meter } = await context.supabase
       .from("meters")
       .select("identifier, meter_number")
       .eq("property_id", submission.property_id)
@@ -236,7 +238,7 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
           },
     );
 
-    const { data: residentAccount } = await supabaseAdmin
+    const { data: residentAccount } = await context.supabase
       .from("resident_accounts")
       .select("id")
       .eq("resident_id", submission.resident_id)
@@ -271,9 +273,8 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
           },
     );
 
-
     // Duplicate detection across this property.
-    const { data: siblings } = await supabaseAdmin
+    const { data: siblings } = await context.supabase
       .from("ocr_extractions")
       .select(
         "id, payment_submission_id, transaction_reference, transaction_number, structured_data, payment_submissions!inner(property_id)",
@@ -297,7 +298,7 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
 
     let duplicateHash = false;
     if (evidence.sha256_hash) {
-      const { data: hashMatches } = await supabaseAdmin
+      const { data: hashMatches } = await context.supabase
         .from("evidence_files")
         .select("id")
         .eq("property_id", submission.property_id)
@@ -342,17 +343,15 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
     delete structured["token"];
     delete structured["token_raw"];
 
-
-    const { data: inserted, error: insertError } = await supabaseAdmin
-      .from("ocr_extractions")
-      .insert({
-        evidence_id: evidence.id,
+    const extractionId = await rpc<string>("process_receipt_ocr", {
+      p_payload: {
         payment_submission_id: submission.id,
+        evidence_id: evidence.id,
         status: needsReview ? "needs_review" : "completed",
         provider: str(result.data["provider"]) ?? "lovable-ai",
         model: "google/gemini-2.5-flash",
         raw_text: result.raw_text,
-        structured_data: structured as never,
+        structured_data: structured,
         amount,
         amount_paid: num(result.data["amount_paid"]) ?? amount,
         units_kwh: units,
@@ -366,61 +365,36 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
         customer_name: str(result.data["customer_name"]),
         service_address: str(result.data["service_address"]),
         transaction_date: str(result.data["transaction_date"]),
+        transaction_time: str(result.data["transaction_time"]),
         tariff_class: str(result.data["tariff_class"]),
         tariff_rate: num(result.data["tariff_rate"]),
         confidence,
-        field_confidence: fieldConfidence as never,
-
+        field_confidence: fieldConfidence,
         processed_at: new Date().toISOString(),
-      })
-      .select("id")
-      .single();
-    if (insertError) throw new Error(insertError.message);
-
-    // Lifecycle: uploaded -> ocr_processed -> pending_approval
-    if (submission.status === "uploaded" || submission.status === "ocr_processed") {
-      await supabaseAdmin
-        .from("payment_submissions")
-        .update({ status: "pending_approval" })
-        .eq("id", submission.id);
-    }
-
-    await supabaseAdmin.from("audit_logs").insert({
-      property_id: submission.property_id,
-      actor_id: context.userId,
-      event_type: "OCR_COMPLETED",
-      entity_type: "payment_submission",
-      entity_id: submission.id,
-      old_data: { status: submission.status },
-      new_data: { status: "pending_approval", ocr_extraction_id: inserted.id },
-      metadata: {
-        confidence,
-        units_kwh: units,
-        amount,
-        token_last4: last4,
-        validation: checks as never,
-      } as never,
+        metadata: {
+          resident_id: submission.resident_id,
+          apartment_id: submission.apartment_id,
+          validation: checks,
+        },
+      },
     });
 
     if (duplicateReference || duplicateToken || duplicateHash) {
-      await supabaseAdmin.from("audit_logs").insert({
-        property_id: submission.property_id,
-        actor_id: context.userId,
-        event_type: "DUPLICATE_DETECTED",
-        entity_type: "payment_submission",
-        entity_id: submission.id,
-        metadata: {
+      await rpc<void>("log_ocr_event", {
+        p_payment_submission_id: submission.id,
+        p_event_type: "DUPLICATE_DETECTED",
+        p_metadata: {
           duplicate_reference: duplicateReference,
           duplicate_token: duplicateToken,
           duplicate_evidence_hash: duplicateHash,
           transaction_reference: reference,
           token_last4: last4,
-        } as never,
+        },
       });
     }
 
     return {
-      extractionId: inserted.id,
+      extractionId,
       status: needsReview ? "needs_review" : "completed",
       confidence,
       field_confidence: fieldConfidence,
@@ -430,6 +404,5 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
       token_last4: last4,
       checks,
       raw_text: result.raw_text,
-
     };
   });

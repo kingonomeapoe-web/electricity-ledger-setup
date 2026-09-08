@@ -51,8 +51,7 @@ export const submitPaymentReceipt = createServerFn({ method: "POST" })
       .single();
     if (error) throw new Error(error.message);
 
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    await supabaseAdmin.from("audit_logs").insert({
+    const { error: auditError } = await context.supabase.from("audit_logs").insert({
       property_id: account.property_id,
       actor_id: context.userId,
       event_type: "RECEIPT_UPLOADED",
@@ -61,6 +60,7 @@ export const submitPaymentReceipt = createServerFn({ method: "POST" })
       new_data: { status: "uploaded", evidence_id: evidence.id },
       metadata: { apartment_id: account.apartment_id } as never,
     });
+    if (auditError) throw new Error(auditError.message);
 
     return { submissionId: submission.id };
   });
