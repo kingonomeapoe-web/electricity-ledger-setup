@@ -79,10 +79,22 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
     if (!submission) throw new Error("Payment submission not found or not accessible.");
 
     // Helper for the new SECURITY INVOKER RPCs (not yet in generated types).
-    const rpc = (name: string, params: Record<string, unknown>) =>
-      (context.supabase.rpc as unknown as (n: string, p: Record<string, unknown>) => Promise<unknown>)(name, params);
+    const rpc = async <T = unknown>(
+      name: string,
+      params: Record<string, unknown>,
+    ): Promise<T | null> => {
+      const sb = context.supabase as unknown as {
+        rpc: (
+          n: string,
+          p: Record<string, unknown>,
+        ) => Promise<{ data: T | null; error: { message: string } | null }>;
+      };
+      const { data: rpcData, error } = await sb.rpc(name, params);
+      if (error) throw new Error(`${name}: ${error.message}`);
+      return rpcData;
+    };
 
-    await rpc("log_ocr_event", {
+    await rpc<void>("log_ocr_event", {
       p_payment_submission_id: submission.id,
       p_event_type: "OCR_STARTED",
       p_metadata: { evidence_id: evidence.id, model: "google/gemini-2.5-flash" },
@@ -97,7 +109,7 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
       });
     } catch (ocrError) {
       const message = ocrError instanceof Error ? ocrError.message : "OCR failed";
-      await rpc("log_ocr_failure", {
+      await rpc<void>("log_ocr_failure", {
         p_payment_submission_id: submission.id,
         p_evidence_id: evidence.id,
         p_error_message: message,
@@ -331,7 +343,7 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
     delete structured["token"];
     delete structured["token_raw"];
 
-    const rpcResult = (await rpc("process_receipt_ocr", {
+    const extractionId = await rpc<string>("process_receipt_ocr", {
       p_payload: {
         payment_submission_id: submission.id,
         evidence_id: evidence.id,
@@ -365,10 +377,10 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
           validation: checks,
         },
       },
-    })) as { id: string } | null;
+    });
 
     if (duplicateReference || duplicateToken || duplicateHash) {
-      await rpc("log_ocr_event", {
+      await rpc<void>("log_ocr_event", {
         p_payment_submission_id: submission.id,
         p_event_type: "DUPLICATE_DETECTED",
         p_metadata: {
@@ -382,7 +394,7 @@ export const runEvidenceOcr = createServerFn({ method: "POST" })
     }
 
     return {
-      extractionId: rpcResult?.id ?? null,
+      extractionId,
       status: needsReview ? "needs_review" : "completed",
       confidence,
       field_confidence: fieldConfidence,
