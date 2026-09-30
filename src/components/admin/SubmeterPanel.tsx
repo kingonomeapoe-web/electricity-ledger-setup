@@ -4,6 +4,7 @@ import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { ReadingCapture } from "@/components/admin/ReadingCapture";
+import { QueryError } from "@/components/admin/QueryError";
 import { EvidenceViewer } from "@/components/EvidenceViewer";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Label } from "@/components/ui/label";
@@ -80,7 +81,13 @@ export function SubmeterPanel({ propertyId, userId }: { propertyId: string; user
             ))}
           </SelectContent>
         </Select>
-        {options.length === 0 && !submetersQuery.isLoading ? (
+        {submetersQuery.isError ? (
+          <QueryError
+            title="Unable to load apartment submeters."
+            error={submetersQuery.error}
+            onRetry={() => void submetersQuery.refetch()}
+          />
+        ) : options.length === 0 && !submetersQuery.isLoading ? (
           <p className="text-xs text-muted-foreground">
             No submeters yet. Add apartments and submeters in Property setup.
           </p>
@@ -141,6 +148,12 @@ export function SubmeterPanel({ propertyId, userId }: { propertyId: string; user
             <h3 className="mb-3 text-sm font-semibold">Reading history</h3>
             {readingsQuery.isLoading ? (
               <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+            ) : readingsQuery.isError ? (
+              <QueryError
+                title="Unable to load meter readings."
+                error={readingsQuery.error}
+                onRetry={() => void readingsQuery.refetch()}
+              />
             ) : (readingsQuery.data ?? []).length === 0 ? (
               <p className="text-sm text-muted-foreground">No readings recorded yet.</p>
             ) : (
