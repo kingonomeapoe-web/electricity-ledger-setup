@@ -3,6 +3,7 @@ import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { ReadingCapture } from "@/components/admin/ReadingCapture";
+import { QueryError } from "@/components/admin/QueryError";
 import { EvidenceViewer } from "@/components/EvidenceViewer";
 import { StatusBadge } from "@/components/StatusBadge";
 import { supabase } from "@/integrations/supabase/client";
@@ -45,6 +46,16 @@ export function CentralMeterPanel({ propertyId, userId }: { propertyId: string; 
   });
 
   if (meterQuery.isLoading) return <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />;
+
+  if (meterQuery.isError) {
+    return (
+      <QueryError
+        title="Unable to load the main meter."
+        error={meterQuery.error}
+        onRetry={() => void meterQuery.refetch()}
+      />
+    );
+  }
 
   if (!meter) {
     return (
@@ -89,6 +100,12 @@ export function CentralMeterPanel({ propertyId, userId }: { propertyId: string; 
         <h3 className="mb-3 text-sm font-semibold">Recent central meter readings</h3>
         {readingsQuery.isLoading ? (
           <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+        ) : readingsQuery.isError ? (
+          <QueryError
+            title="Unable to load meter readings."
+            error={readingsQuery.error}
+            onRetry={() => void readingsQuery.refetch()}
+          />
         ) : !hasReadings ? (
           <p className="text-sm text-muted-foreground">No readings recorded yet.</p>
         ) : (
