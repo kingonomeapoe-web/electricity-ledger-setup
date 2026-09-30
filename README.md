@@ -9,6 +9,9 @@ Evidence-backed prepaid electricity accounting for a property with a central met
 - [Configuration](#configuration)
 - [Database and storage](#database-and-storage)
 - [Using the app](#using-the-app)
+- [Administrator brief](#administrator-brief)
+- [Resident brief](#resident-brief)
+- [Launch readiness](#launch-readiness)
 - [Data and security model](#data-and-security-model)
 - [Cloudflare deployment](#cloudflare-deployment)
 - [Development and checks](#development-and-checks)
@@ -85,6 +88,76 @@ The property administrator opens **Review & reconciliation → Payments** (`/rev
 ### 4. Record readings and reconcile
 
 Administrators capture central and apartment submeter readings in **Evidence & readings**; review them in the **Central meter** and **Submeters** tabs of **Review & reconciliation**. Confirmed submeter consumption is posted through `post_confirmed_submeter_consumption()`, not by editing a resident balance. Use **Reconciliation** to compare central and submeter consumption and classify variances. **Ledger** lists transactions and provides an audited adjustment action; **Audit** shows critical events. Do not insert or update ledger transactions directly from client code.
+
+## Administrator brief
+
+The administrator owns every step that changes electricity or money units. Day to day:
+
+1. **Check the review queue.** Open **Review & reconciliation → Payments** (`/review`). Every submitted receipt appears with the resident, apartment, extracted amount/units/token/reference, field-level confidence and validation warnings (meter match, duplicates).
+2. **Compare, then decide.** Read the receipt image beside the OCR-detected values. Where they differ, the **receipt itself wins** — correct the confirmed values during review. Approve for loading, or reject with a clear reason the resident can act on.
+3. **Load the token physically.** Approval does not add electricity. Take the confirmed token to the central prepaid meter, load it, and photograph the meter display.
+4. **Confirm the credit.** In the payment's credit flow, upload the meter-display photo, enter the observed post-load balance, and compare it with the expected balance (pre-load balance + purchased units). Confirm only when they match; any difference above tolerance requires a written explanation. Confirming runs the authoritative `confirm_central_meter_credit()` routine — the only path that adds units.
+5. **Keep readings current.** Capture central and submeter readings in **Evidence & readings** with photo evidence, then review consumption and reconciliation variances in **Review & reconciliation**. Explain or correct variances before they accumulate.
+6. **Correct through the ledger, never around it.** Mistakes are fixed with the audited adjustment action on the **Ledger** tab (request → review → approve/reject → execute), producing an immutable correcting transaction. Never edit a ledger row, a balance, or a reading directly.
+7. **Investigate from the audit trail.** Every critical action (approvals, token reveals, credits, adjustments, OCR failures) is recorded with actor, entity and state changes. Use **Audit** when something looks wrong.
+
+Non-negotiables for administrators:
+
+- Review is property-scoped: you can only see and approve payments for properties you administer. Residents can never approve their own payments.
+- Token reveal is an audited, on-demand action. Do not copy tokens into chats, notes or screenshots.
+- No OCR value is trusted blindly — low-confidence fields must be read off the receipt by eye.
+
+## Resident brief
+
+As a resident you buy prepaid electricity exactly as before; the app keeps the property's ledger honest.
+
+1. **Sign up first.** Your administrator links your account email to your apartment. Until then you will see a setup message instead of a balance.
+2. **Buy electricity from your vendor** as usual and keep the receipt — paper or on-screen.
+3. **Submit it immediately.** On **My electricity** (`/resident`), tap **Buy electricity / upload receipt**, then take a photo, choose from your gallery, or attach the file (JPG, PNG, WEBP or PDF).
+4. **Watch the status.** Your submission moves from *uploaded* → *OCR processed* → *pending approval* → *approved for loading* → *loaded* → *credited*. You will see errors and rejections with a reason — but no status ever changes a balance by itself.
+5. **Wait for the administrator.** They verify your receipt, load the token on the building's main meter, and confirm the credit from the meter's own display. Your confirmed units and new balance then appear on your page.
+6. **Know your limits.** You cannot type in units, tokens or balances, approve your own payment, or see anyone else's data. If a receipt is rejected or the OCR misread it, resubmit a clearer photo — nothing is lost.
+
+## Launch readiness
+
+Before inviting real users, work through these in order.
+
+### Launch blockers
+
+Each of these stops the app from being used for real money and electricity. Do not launch with any of them open.
+
+| # | Blocker | Why it blocks launch |
+| --- | --- | --- |
+| 1 | Backend migrations applied **exactly once** to the production backend, grants and RLS verified | Without correct grants/RLS, data is unreachable or — worse — cross-tenant readable. |
+| 2 | The first administrator has claimed admin on `/dashboard` | `claimFirstAdmin` needs privileged credentials at runtime; an unclaimed or mis-claimed system has no one who can set up the property or approve payments. |
+| 3 | Private `electricity-evidence` bucket exists with its authenticated-only policies | Receipts are the evidence chain; a missing bucket breaks submission, and a public bucket breaks confidentiality. |
+| 4 | `LOVABLE_API_KEY` set as a runtime secret on the serving host | Without it, OCR fails and the review queue loses its extracted fields. |
+| 5 | Privileged server credential available for admin setup (`SUPABASE_SERVICE_ROLE_KEY`) on the serving host | Property creation and resident linking fail without it on an independently hosted Worker. On Lovable Cloud hosting this is managed for you. |
+| 6 | One full end-to-end run with real data: property setup → resident sign-up/link → receipt upload → OCR → approve → physical load → confirm credit → balance visible | This is the only proof the credit path works on the target host. No mock data is acceptable in this test. |
+| 7 | Submeter readings captured for every apartment and an initial reconciliation done | Launching without a reading baseline makes the first variance unexplainable. |
+
+### Must haves
+
+Required for a trustworthy launch, even if the app technically runs without them:
+
+- Verified route protection: signed-out access to `/dashboard`, `/resident`, `/setup`, `/admin` and `/review` redirects to `/auth`, and a resident cannot open admin pages.
+- Auth provider configured (including the Google option) and email confirmation behaviour deliberately chosen.
+- At least one active administrator **per property**, with the resident-to-apartment links complete.
+- HTTPS on the serving domain; signed evidence URLs never shared as permanent links.
+- A routine for checking **Audit** and **Reconciliation** weekly, so variances are explained while they are small.
+- A known backup/restore story for the backend before real transactions accumulate.
+
+### Good to haves
+
+Nice to have soon after launch; none block go-live:
+
+- Push/email notification to the resident when a payment is credited or rejected.
+- CSV/PDF export of the ledger and reconciliation reports for the property owner.
+- Dispute workflow (currently a rejected receipt is simply resubmitted).
+- Custom domain and branded email templates for auth messages.
+- Monitoring/alerts on OCR failure rates and stuck `pending_approval` submissions.
+- Multi-property UX polish for administrators who manage several buildings.
+- Offline-tolerant PWA behaviour beyond the current installable manifest.
 
 ## Data and security model
 
